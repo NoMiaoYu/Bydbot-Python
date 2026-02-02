@@ -78,6 +78,9 @@ def draw_earthquake(data):
         ax_map.add_feature(cfeature.RIVERS, edgecolor='white', linewidth=0.3, alpha=0.5)
         ax_map.add_feature(cfeature.BORDERS, edgecolor='white', linewidth=0.4, linestyle='--')
 
+        # 添加国家和省级行政边界
+        ax_map.add_feature(cfeature.STATES, linewidth=0.3, edgecolor='gray', facecolor='none', alpha=0.5)
+
         # 震中标记 - 使用两条对角线形成 ❌ 形状，白色描边
         # 白色外层描边 - 从左上到右下
         ax_map.plot([lon-0.35, lon+0.35], [lat+0.35, lat-0.35], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)

@@ -182,6 +182,7 @@ async def process_message(message, config, target_group=None):
                             )
                             if img_path:
                                 await send_group_img(group_id, img_path)
+                                import os
                                 os.remove(img_path)
                                 logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
                     else:
@@ -340,6 +341,7 @@ async def process_message_without_rules(message, config, target_group=None):
                             )
                             if img_path:
                                 await send_group_img(group_id, img_path)
+                                import os
                                 os.remove(img_path)
                                 logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
                     else:
