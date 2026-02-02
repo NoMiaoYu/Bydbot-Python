@@ -1,0 +1,175 @@
+{
+  "napcat_http_url": "http://127.0.0.1:3000",
+  "napcat_token": "cm@C>|e8nnmUI_xu",
+  "ws_port": 9998,
+  "log_file": "eqbot.log",
+  "enable_command_listener": true,
+  "test_command": "/eqbottest",
+  "test_groups_only": true,
+
+  "groups": {
+    "1071528933": {
+      "mode": "blacklist",
+      "sources": []
+    }
+  },
+
+  "sources": {
+    "weatheralarm": true,
+    "tsunami": true,
+    "cenc": true,
+    "cea": true,
+    "cea-pr": true,
+    "sichuan": true,
+    "ningxia": true,
+    "guangxi": true,
+    "shanxi": true,
+    "beijing": true,
+    "cwa": true,
+    "cwa-eew": true,
+    "hko": true,
+    "jma": true,
+    "usgs": true,
+    "sa": true,
+    "emsc": true,
+    "bcsf": true,
+    "gfz": true,
+    "usp": true,
+    "kma": true,
+    "kma-eew": true,
+    "fssn": true
+  },
+
+  "source_rules": {
+    "usgs": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "jma": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "hko": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "emsc": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "bcsf": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "gfz": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "usp": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "kma": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "kma-eew": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "fssn": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "sichuan": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "ningxia": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "guangxi": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "shanxi": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    },
+    "beijing": {
+      "enabled": true,
+      "match_field": "magnitude",
+      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+    }
+  },
+
+  "message_templates": {
+    "weatheralarm": "[中国气象局 气象预警]\n| 标题: {headline}\n| 生效时间: {effective}\n| 详细描述: {description}\n| 位置: {latitude} {longitude}\n| 预警类型: {type}",
+
+    "tsunami": "[自然资源部 海啸预警]\n| 事件编码: {code}\n| 警报标题: {warningInfo.title}\n| 警报级别: {warningInfo.level}\n| 引发地震: {warningInfo.subtitle}\n| 发布单位: {warningInfo.orgUnit}\n| 警报批次: {details.batch}",
+
+    "cenc": "[CENC\\中国地震台网 · {infoTypeName}]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "cea": "[CEA\\中国地震预警网 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}",
+
+    "cea-pr": "[CEA\\中国地震预警网 省级预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}\n| 发布省份: {province}",
+
+    "sichuan": "[四川省地震局 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}\n| 数据类型: {infoTypeName}\n| 数据来源: {producer}\n| 发表时间: {createTime}",
+
+    "ningxia": "[宁夏地震局 地震信息]\n| 发生时间: {shockTime}\n| 标题: {title}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "guangxi": "[广西地震局 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "shanxi": "[山西地震局 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "beijing": "[北京地震局 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "cwa": "[CWA\\台湾气象署 地震报告]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 最大震度: {maxIntensity}",
+
+    "cwa-eew": "[CWA\\台湾气象署 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估最大震度: {maxIntensity}",
+
+    "jma": "[JMA\\日本气象厅 · {infoTypeName}]\n第 {updates} 报\n| 发生时间(JST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 最大震度: {epiIntensity}\n| 状态: {final}\\{cancel}",
+
+    "hko": "[HKO\\香港天文台 地震信息]\n| 发生时间(HKT): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 位置描述: {citystring}\n| 区域: {region}\n| 数据核验: {verify}",
+
+    "usgs": "[USGS\\美国地质调查局 · {infoTypeName}]\n| 发生时间: {shockTime}\n| 标题: {title}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}\n| 发表时间: {updateTime}\n| 详细页面: {url}",
+
+    "sa": "[ShakeAlert 地震预警]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "emsc": "[EMSC\\欧洲地中海地震中心 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "bcsf": "[BCSF\\法国中央地震研究所 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "gfz": "[GFZ\\德国地学研究中心 地震信息]\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "usp": "[USP\\巴西圣保罗大学 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}",
+
+    "kma": "[KMA\\韩国气象厅 地震信息]\n| 发生时间(KST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 地震烈度: {epiIntensity}",
+
+    "kma-eew": "[KMA\\韩国气象厅 地震预警]\n| 发生时间(KST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估最大烈度: {epiIntensity}\n| 受影响地区: {affectedAreas}",
+
+    "fssn": "[FSSN 地震速报]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 发表时间: {createTime}\n| 区划: {placeName_zh}\n| 速报类型: {infoTypeName}"
+    },
+
+  "draw_sources": ["fssn", "usgs", "jma", "cwa", "cenc"],
+
+  "draw_filters": {},
+
+  "draw_timeout": 10
+ 
+}
