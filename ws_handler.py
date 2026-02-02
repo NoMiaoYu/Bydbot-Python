@@ -160,6 +160,7 @@ async def process_message(message, config, target_group=None):
 
                                         # 发送图片
                                         await send_group_img(group_id, tmp_file_path)
+                                        import os
                                         os.remove(tmp_file_path)  # 发送后删除临时文件
                                         logging.info(f"成功向群 {group_id} 发送cwa提供的地震图片")
                                     else:
@@ -171,6 +172,7 @@ async def process_message(message, config, target_group=None):
                                         )
                                         if img_path:
                                             await send_group_img(group_id, img_path)
+                                            import os
                                             os.remove(img_path)
                                             logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
                         except Exception as e:
@@ -182,6 +184,7 @@ async def process_message(message, config, target_group=None):
                             )
                             if img_path:
                                 await send_group_img(group_id, img_path)
+                                import os
                                 os.remove(img_path)
                                 logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
                     else:
@@ -193,6 +196,7 @@ async def process_message(message, config, target_group=None):
                         )
                         if img_path:
                             await send_group_img(group_id, img_path)
+                            import os
                             os.remove(img_path)
                             logging.info(f"成功向群 {group_id} 发送地震地图")
                 else:
@@ -318,6 +322,7 @@ async def process_message_without_rules(message, config, target_group=None):
 
                                         # 发送图片
                                         await send_group_img(group_id, tmp_file_path)
+                                        import os
                                         os.remove(tmp_file_path)  # 发送后删除临时文件
                                         logging.info(f"[测试命令] 成功向群 {group_id} 发送cwa提供的地震图片")
                                     else:
@@ -329,6 +334,7 @@ async def process_message_without_rules(message, config, target_group=None):
                                         )
                                         if img_path:
                                             await send_group_img(group_id, img_path)
+                                            import os
                                             os.remove(img_path)
                                             logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
                         except Exception as e:
@@ -340,6 +346,7 @@ async def process_message_without_rules(message, config, target_group=None):
                             )
                             if img_path:
                                 await send_group_img(group_id, img_path)
+                                import os
                                 os.remove(img_path)
                                 logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
                     else:
@@ -444,35 +451,37 @@ async def napcat_ws_handler(websocket, path, config):
                             }
                             await process_message(json.dumps(test2), config, target_group=group_id)
                         else:
-                            # 如果没有存储的数据，则使用原始的测试数据
-                            # 测试1 emsc
+                            # 如果没有存储的数据，则使用硬编码的测试数据
+                            # 测试1 cenc - 中国内部地震
                             test1 = {
                                 "type": "update",
-                                "source": "emsc",
+                                "source": "cenc",
                                 "Data": {
-                                    "id": "test_emsc_001",
+                                    "id": "test_cenc_001",
                                     "shockTime": "2026-02-02 03:00:00",
-                                    "latitude": 33.993,
-                                    "longitude": -116.949,
-                                    "depth": 6,
-                                    "magnitude": 2.1,
-                                    "placeName": "SOUTHERN CALIFORNIA (测试)"
+                                    "latitude": 31.0,
+                                    "longitude": 103.4,
+                                    "depth": 10,
+                                    "magnitude": 5.5,
+                                    "placeName": "四川汶川县",
+                                    "infoTypeName": "正式测定"
                                 }
                             }
                             await process_message(json.dumps(test1), config, target_group=group_id)
 
-                            # 测试2 usgs
+                            # 测试2 usgs - 外国M5.0以上地震
                             test2 = {
                                 "type": "update",
                                 "source": "usgs",
                                 "Data": {
                                     "id": "test_usgs_001",
                                     "shockTime": "2026-02-02 04:59:59",
-                                    "placeName": "汤加群岛附近[正式(已核实)] (测试)",
-                                    "magnitude": 5.8,
-                                    "latitude": -20.0,
-                                    "longitude": -175.0,
-                                    "depth": 10
+                                    "placeName": "Near coast of Ecuador",
+                                    "magnitude": 6.2,
+                                    "latitude": -0.719,
+                                    "longitude": -80.236,
+                                    "depth": 10,
+                                    "title": "M 6.2 - Near coast of Ecuador"
                                 }
                             }
                             await process_message(json.dumps(test2), config, target_group=group_id)
