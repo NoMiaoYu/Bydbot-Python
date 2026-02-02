@@ -127,13 +127,13 @@ def draw_earthquake(data):
 
         # 震中标记 - 使用两条对角线形成 ❌ 形状，白色描边
         # 白色外层描边 - 从左上到右下
-        ax_map.plot([lon-0.35, lon+0.35], [lat+0.35, lat-0.35], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
+        ax_map.plot([lon-0.15, lon+0.15], [lat+0.15, lat-0.15], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
         # 白色外层描边 - 从右上到左下
-        ax_map.plot([lon+0.35, lon-0.35], [lat+0.35, lat-0.35], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
+        ax_map.plot([lon+0.15, lon-0.15], [lat+0.15, lat-0.15], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
         # 红色交叉主体 - 从左上到右下
-        ax_map.plot([lon-0.32, lon+0.32], [lat+0.32, lat-0.32], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+        ax_map.plot([lon-0.14, lon+0.14], [lat+0.14, lat-0.14], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
         # 红色交叉主体 - 从右上到左下
-        ax_map.plot([lon+0.32, lon-0.32], [lat+0.32, lat-0.32], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+        ax_map.plot([lon+0.14, lon-0.14], [lat+0.14, lat-0.14], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
 
         ax_map.set_axis_off()
         ax_map.patch.set_visible(False)

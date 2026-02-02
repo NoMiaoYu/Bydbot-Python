@@ -4,4 +4,8 @@ __pycache__/
 *$py.class
 *.so
 .Python
-eqbot.log
+实现/
+*.*
+
+./
+*.log

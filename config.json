@@ -11,6 +11,14 @@
     "1071528933": {
       "mode": "blacklist",
       "sources": []
+    },
+    "1053840892": {
+      "mode": "blacklist",
+      "sources": ["kma", "kma-eew", "gfz", "bcsf", "usp"]
+    },
+    "557268327": {
+      "mode": "blacklist",
+      "sources": ["kma", "kma-eew", "gfz", "bcsf", "usp"]
     }
   },
 
