@@ -28,9 +28,9 @@ def draw_earthquake(data):
         place = data.get('placeName', '未知地点')
         info_type = data.get('infoTypeName', '')
 
-        # 2. 计算地图范围
-        extent_size_lon = 12
-        extent_size_lat = 10 if abs(lat) < 60 else 12
+        # 2. 计算地图范围 - 缩小视野以显示震源周围详细情况（放大倍率增大一倍）
+        extent_size_lon = 3  # 从6缩小到3，放大一倍
+        extent_size_lat = 2.5 if abs(lat) < 60 else 3  # 从5/6缩小到2.5/3，放大一倍
         lon_min, lon_max = lon - extent_size_lon, lon + extent_size_lon
         lat_min, lat_max = lat - extent_size_lat, lat + extent_size_lat
 
@@ -80,6 +80,50 @@ def draw_earthquake(data):
 
         # 添加国家和省级行政边界
         ax_map.add_feature(cfeature.STATES, linewidth=0.3, edgecolor='gray', facecolor='none', alpha=0.5)
+
+        # 性能优化：判断震中位置是否在中国范围内，如果不在就不用考虑断层的绘制
+        is_in_china = (73 <= lon <= 135) and (18 <= lat <= 54)  # 中国领土大致范围
+
+        if is_in_china:
+            # 添加中国断层数据
+            try:
+                import os
+
+                gmt_file_path = os.path.join(os.path.dirname(__file__), 'data', 'CN-faults.gmt')
+                if os.path.exists(gmt_file_path):
+                    # 直接读取GMT文件并解析断层数据
+                    with open(gmt_file_path, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+
+                    current_fault = []
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith('>'):
+                            # 如果当前有一组断层数据，绘制它
+                            if current_fault:
+                                lons, lats = zip(*current_fault)
+                                ax_map.plot(lons, lats, color='black', linewidth=0.5, alpha=0.6, transform=ccrs.PlateCarree())
+                            # 开始新的一组断层数据
+                            current_fault = []
+                        elif line and not line.startswith('#'):
+                            # 解析坐标数据 (经度, 纬度, 高程)
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                try:
+                                    lon_val = float(parts[0])
+                                    lat_val = float(parts[1])
+                                    # 只绘制在当前视图范围内的断层
+                                    if lon_min <= lon_val <= lon_max and lat_min <= lat_val <= lat_max:
+                                        current_fault.append((lon_val, lat_val))
+                                except ValueError:
+                                    continue
+
+                    # 绘制最后一组断层数据
+                    if current_fault:
+                        lons, lats = zip(*current_fault)
+                        ax_map.plot(lons, lats, color='black', linewidth=0.5, alpha=0.6, transform=ccrs.PlateCarree())
+            except Exception as e:
+                print(f"加载断层数据时出错: {e}")
 
         # 震中标记 - 使用两条对角线形成 ❌ 形状，白色描边
         # 白色外层描边 - 从左上到右下
