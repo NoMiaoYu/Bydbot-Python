@@ -142,7 +142,50 @@ async def process_message(message, config, target_group=None):
             if source in config['draw_sources']:
                 filters = config['draw_filters'].get(source, {})
                 if all(re.search(regex, str(event_data.get(field, ''))) for field, regex in filters.items()):
-                    try:
+                    # 检查是否有cwa提供的imageURI
+                    if source == "cwa" and "imageURI" in event_data:
+                        image_url = event_data["imageURI"]
+                        logging.info(f"使用cwa提供的图片URL: {image_url}")
+                        try:
+                            import aiohttp
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(image_url) as resp:
+                                    if resp.status == 200:
+                                        # 下载图片到临时文件
+                                        import tempfile
+                                        import os
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+                                            tmp_file.write(await resp.read())
+                                            tmp_file_path = tmp_file.name
+
+                                        # 发送图片
+                                        await send_group_img(group_id, tmp_file_path)
+                                        os.remove(tmp_file_path)  # 发送后删除临时文件
+                                        logging.info(f"成功向群 {group_id} 发送cwa提供的地震图片")
+                                    else:
+                                        logging.warning(f"下载cwa图片失败，状态码: {resp.status}，切换到本地绘图")
+                                        # 如果下载失败，使用本地绘图
+                                        img_path = await asyncio.wait_for(
+                                            draw_earthquake_async(event_data),
+                                            timeout=config.get('draw_timeout', 10)
+                                        )
+                                        if img_path:
+                                            await send_group_img(group_id, img_path)
+                                            os.remove(img_path)
+                                            logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
+                        except Exception as e:
+                            logging.error(f"下载或发送cwa图片失败: {e}，切换到本地绘图")
+                            # 如果下载或发送失败，使用本地绘图
+                            img_path = await asyncio.wait_for(
+                                draw_earthquake_async(event_data),
+                                timeout=config.get('draw_timeout', 10)
+                            )
+                            if img_path:
+                                await send_group_img(group_id, img_path)
+                                os.remove(img_path)
+                                logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
+                    else:
+                        # 非cwa数据源或没有imageURI字段，使用本地绘图
                         logging.info(f"为群 {group_id} 生成地震地图")
                         img_path = await asyncio.wait_for(
                             draw_earthquake_async(event_data),
@@ -152,10 +195,6 @@ async def process_message(message, config, target_group=None):
                             await send_group_img(group_id, img_path)
                             os.remove(img_path)
                             logging.info(f"成功向群 {group_id} 发送地震地图")
-                    except asyncio.TimeoutError:
-                        logging.warning(f"绘图超时 (群 {group_id})")
-                    except Exception as e:
-                        logging.error(f"绘图失败 (群 {group_id}): {e}")
                 else:
                     logging.info(f"数据源 {source} 未通过绘图过滤规则，跳过绘图")
 
@@ -261,7 +300,50 @@ async def process_message_without_rules(message, config, target_group=None):
             if source in config['draw_sources']:
                 filters = config['draw_filters'].get(source, {})
                 if all(re.search(regex, str(event_data.get(field, ''))) for field, regex in filters.items()):
-                    try:
+                    # 检查是否有cwa提供的imageURI
+                    if source == "cwa" and "imageURI" in event_data:
+                        image_url = event_data["imageURI"]
+                        logging.info(f"[测试命令] 使用cwa提供的图片URL: {image_url}")
+                        try:
+                            import aiohttp
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(image_url) as resp:
+                                    if resp.status == 200:
+                                        # 下载图片到临时文件
+                                        import tempfile
+                                        import os
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+                                            tmp_file.write(await resp.read())
+                                            tmp_file_path = tmp_file.name
+
+                                        # 发送图片
+                                        await send_group_img(group_id, tmp_file_path)
+                                        os.remove(tmp_file_path)  # 发送后删除临时文件
+                                        logging.info(f"[测试命令] 成功向群 {group_id} 发送cwa提供的地震图片")
+                                    else:
+                                        logging.warning(f"[测试命令] 下载cwa图片失败，状态码: {resp.status}，切换到本地绘图")
+                                        # 如果下载失败，使用本地绘图
+                                        img_path = await asyncio.wait_for(
+                                            draw_earthquake_async(event_data),
+                                            timeout=config.get('draw_timeout', 10)
+                                        )
+                                        if img_path:
+                                            await send_group_img(group_id, img_path)
+                                            os.remove(img_path)
+                                            logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
+                        except Exception as e:
+                            logging.error(f"[测试命令] 下载或发送cwa图片失败: {e}，切换到本地绘图")
+                            # 如果下载或发送失败，使用本地绘图
+                            img_path = await asyncio.wait_for(
+                                draw_earthquake_async(event_data),
+                                timeout=config.get('draw_timeout', 10)
+                            )
+                            if img_path:
+                                await send_group_img(group_id, img_path)
+                                os.remove(img_path)
+                                logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
+                    else:
+                        # 非cwa数据源或没有imageURI字段，使用本地绘图
                         logging.info(f"[测试命令] 为群 {group_id} 生成地震地图")
                         img_path = await asyncio.wait_for(
                             draw_earthquake_async(event_data),
@@ -271,10 +353,6 @@ async def process_message_without_rules(message, config, target_group=None):
                             await send_group_img(group_id, img_path)
                             os.remove(img_path)
                             logging.info(f"[测试命令] 成功向群 {group_id} 发送地震地图")
-                    except asyncio.TimeoutError:
-                        logging.warning(f"[测试命令] 绘图超时 (群 {group_id})")
-                    except Exception as e:
-                        logging.error(f"[测试命令] 绘图失败 (群 {group_id}): {e}")
                 else:
                     logging.info(f"[测试命令] 数据源 {source} 未通过绘图过滤规则，跳过绘图")
 
