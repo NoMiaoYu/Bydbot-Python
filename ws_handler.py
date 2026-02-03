@@ -3,10 +3,10 @@ import json
 import logging
 import re
 import websockets
-import os
 from message_sender import send_group_msg, send_group_img
 from draw_eq import draw_earthquake_async
 
+# 用于心跳计数的变量
 HEARTBEAT_COUNT = 0
 
 # 存储接收到的地震数据，用于测试命令
@@ -15,64 +15,58 @@ received_earthquake_data = {}
 # 存储FAN提供的initial数据，用于测试命令
 initial_earthquake_data = []
 
-async def process_message(message, config, target_group=None):
-    global HEARTBEAT_COUNT
-    try:
-        data = json.loads(message)
-    except json.JSONDecodeError:
-        logging.error("FAN WS 消息解析失败")
-        return None
 
-    msg_type = data.get('type')
+def get_nested_value(data, path):
+    """从嵌套字典中获取值"""
+    keys = path.split('.')
+    value = data
+    for key in keys:
+        value = value.get(key, '')
+        if value == '':
+            return ''
+    return value
 
-    if msg_type == 'heartbeat':
-        HEARTBEAT_COUNT += 1
-        if HEARTBEAT_COUNT % 5 == 0:
-            return json.dumps({"type": "ping"})
-        return None
 
-    if msg_type == 'initial_all':
-        logging.info("收到 FAN 初始全量数据")
-        # 存储initial数据，用于测试命令
-        initial_data = data.get('Data', [])
-        stored_count = 0
-        for item in initial_data:
-            source = item.get('source')
-            event_data = item.get('Data', {})
-            # 只存储有绘图功能的数据源
-            if source in config['draw_sources']:
-                initial_earthquake_data.append(item)
-                stored_count += 1
-        logging.info(f"解析 initial_all 数据: 总计 {len(initial_data)} 条，存储 {stored_count} 条用于绘图的数据源")
-        return None
+def format_coordinates(event_data):
+    """格式化经纬度为带方向的形式"""
+    formatted = {}
+    if 'longitude' in event_data and 'latitude' in event_data:
+        lon = float(event_data['longitude'])
+        lat = float(event_data['latitude'])
+        # 格式化经纬度为带方向的形式
+        lon_direction = "E" if lon >= 0 else "W"
+        lat_direction = "N" if lat >= 0 else "S"
+        formatted_lon = f"{abs(lon):.2f}°{lon_direction}"
+        formatted_lat = f"{abs(lat):.2f}°{lat_direction}"
+        # 添加到格式化字典中
+        formatted['longitude_formatted'] = formatted_lon
+        formatted['latitude_formatted'] = formatted_lat
+    return formatted
 
-    if msg_type != 'update':
-        return None
 
-    source = data.get('source')
-    event_data = data.get('Data', {})
+def should_push_to_group(group_id, source, group_config):
+    """检查是否应该推送消息到群组"""
+    mode = group_config.get('mode', 'blacklist')
+    sources_list = group_config.get('sources', [])
 
-    logging.info(f"收到新消息: 数据源={source}, 时间={event_data.get('shockTime', '未知')}, "
-                 f"震级={event_data.get('magnitude', '未知')}, 位置={event_data.get('placeName', '未知')}")
+    if mode == 'blacklist' and source not in sources_list:
+        logging.info(f"群 {group_id}: 黑名单模式，数据源 {source} 不在黑名单中，推送")
+        return True
+    elif mode == 'blacklist' and source in sources_list:
+        logging.info(f"群 {group_id}: 黑名单模式，数据源 {source} 在黑名单中，跳过")
+        return False
+    elif mode == 'whitelist' and source in sources_list:
+        logging.info(f"群 {group_id}: 白名单模式，数据源 {source} 在白名单中，推送")
+        return True
+    elif mode == 'whitelist' and source not in sources_list:
+        logging.info(f"群 {group_id}: 白名单模式，数据源 {source} 不在白名单中，跳过")
+        return False
 
-    if not config['sources'].get(source, False):
-        logging.info(f"数据源 {source} 未启用，跳过处理")
-        return None
+    return False
 
-    # 存储接收到的数据，用于测试命令（不管过滤规则如何）
-    if source in config['draw_sources']:  # 只存储需要绘图的数据源
-        received_earthquake_data[source] = event_data
-        logging.info(f"存储数据源 {source} 用于测试命令")
 
-    rule = config['source_rules'].get(source)
-    if rule and rule['enabled']:
-        field_value = str(event_data.get(rule['match_field'], ''))
-        if not re.search(rule['regex'], field_value):
-            logging.info(f"数据源 {source} 未通过过滤规则，跳过推送")
-            return None
-        else:
-            logging.info(f"数据源 {source} 通过过滤规则，准备推送")
-
+async def process_earthquake_message(event_data, source, config, target_group=None):
+    """处理地震消息的核心逻辑"""
     # 推送目标
     if target_group:
         groups_to_push = [target_group]
@@ -83,126 +77,203 @@ async def process_message(message, config, target_group=None):
 
     for group_id in groups_to_push:
         group_config = config['groups'].get(group_id, {})
-        mode = group_config.get('mode', 'blacklist')
-        sources_list = group_config.get('sources', [])
-
+        
         # 检查推送规则
-        should_push = False
-        if mode == 'blacklist' and source not in sources_list:
-            should_push = True
-            logging.info(f"群 {group_id}: 黑名单模式，数据源 {source} 不在黑名单中，推送")
-        elif mode == 'blacklist' and source in sources_list:
-            logging.info(f"群 {group_id}: 黑名单模式，数据源 {source} 在黑名单中，跳过")
-            continue
-        elif mode == 'whitelist' and source in sources_list:
-            should_push = True
-            logging.info(f"群 {group_id}: 白名单模式，数据源 {source} 在白名单中，推送")
-        elif mode == 'whitelist' and source not in sources_list:
-            logging.info(f"群 {group_id}: 白名单模式，数据源 {source} 不在白名单中，跳过")
+        if not should_push_to_group(group_id, source, group_config):
             continue
 
-        if should_push:
-            template = config['message_templates'].get(source, config['message_templates'].get('default', ''))
-            if template:
-                try:
-                    def get_nested(d, path):
-                        keys = path.split('.')
-                        v = d
-                        for k in keys:
-                            v = v.get(k, '')
-                            if v == '':
-                                return ''
-                        return v
+        # 发送文本消息
+        await send_earthquake_message(group_id, event_data, source, config)
+        
+        # 绘制并发送图片
+        await send_earthquake_image(group_id, event_data, source, config)
 
-                    placeholders = re.findall(r'\{([^{}]+)\}', template)
-                    formatted = {ph: get_nested(event_data, ph) for ph in placeholders}
 
-                    # 添加经纬度方向判断
-                    if 'longitude' in event_data and 'latitude' in event_data:
-                        lon = float(event_data['longitude'])
-                        lat = float(event_data['latitude'])
-                        # 格式化经纬度为带方向的形式
-                        lon_direction = "E" if lon >= 0 else "W"
-                        lat_direction = "N" if lat >= 0 else "S"
-                        formatted_lon = f"{abs(lon):.2f}°{lon_direction}"
-                        formatted_lat = f"{abs(lat):.2f}°{lat_direction}"
-                        # 添加到格式化字典中
-                        formatted['longitude_formatted'] = formatted_lon
-                        formatted['latitude_formatted'] = formatted_lat
+async def send_earthquake_message(group_id, event_data, source, config):
+    """发送地震消息到群组"""
+    template = config['message_templates'].get(source, config['message_templates'].get('default', ''))
+    if not template:
+        return
 
-                    formatted['source_upper'] = source.upper()
-                    msg_text = template.format(**formatted)
-                    if msg_text.strip():
-                        logging.info(f"向群 {group_id} 发送消息: {msg_text}")
-                        await send_group_msg(group_id, msg_text)
-                except Exception as e:
-                    logging.warning(f"模板填充失败 (群 {group_id}): {e}")
+    try:
+        placeholders = re.findall(r'\{([^{}]+)\}', template)
+        formatted = {ph: get_nested_value(event_data, ph) for ph in placeholders}
 
-            # 绘图
-            if source in config['draw_sources']:
-                filters = config['draw_filters'].get(source, {})
-                if all(re.search(regex, str(event_data.get(field, ''))) for field, regex in filters.items()):
-                    # 检查是否有cwa提供的imageURI
-                    if source == "cwa" and "imageURI" in event_data:
-                        image_url = event_data["imageURI"]
-                        logging.info(f"使用cwa提供的图片URL: {image_url}")
-                        try:
-                            import aiohttp
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(image_url) as resp:
-                                    if resp.status == 200:
-                                        # 下载图片到临时文件
-                                        import tempfile
-                                        import os
-                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
-                                            tmp_file.write(await resp.read())
-                                            tmp_file_path = tmp_file.name
+        # 添加格式化坐标
+        formatted.update(format_coordinates(event_data))
 
-                                        # 发送图片
-                                        await send_group_img(group_id, tmp_file_path)
-                                        import os
-                                        os.remove(tmp_file_path)  # 发送后删除临时文件
-                                        logging.info(f"成功向群 {group_id} 发送cwa提供的地震图片")
-                                    else:
-                                        logging.warning(f"下载cwa图片失败，状态码: {resp.status}，切换到本地绘图")
-                                        # 如果下载失败，使用本地绘图
-                                        img_path = await asyncio.wait_for(
-                                            draw_earthquake_async(event_data),
-                                            timeout=config.get('draw_timeout', 10)
-                                        )
-                                        if img_path:
-                                            await send_group_img(group_id, img_path)
-                                            import os
-                                            os.remove(img_path)
-                                            logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
-                        except Exception as e:
-                            logging.error(f"下载或发送cwa图片失败: {e}，切换到本地绘图")
-                            # 如果下载或发送失败，使用本地绘图
-                            img_path = await asyncio.wait_for(
-                                draw_earthquake_async(event_data),
-                                timeout=config.get('draw_timeout', 10)
-                            )
-                            if img_path:
-                                await send_group_img(group_id, img_path)
-                                import os
-                                os.remove(img_path)
-                                logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
-                    else:
-                        # 非cwa数据源或没有imageURI字段，使用本地绘图
-                        logging.info(f"为群 {group_id} 生成地震地图")
-                        img_path = await asyncio.wait_for(
-                            draw_earthquake_async(event_data),
-                            timeout=config.get('draw_timeout', 10)
-                        )
-                        if img_path:
-                            await send_group_img(group_id, img_path)
-                            import os
-                            os.remove(img_path)
-                            logging.info(f"成功向群 {group_id} 发送地震地图")
+        formatted['source_upper'] = source.upper()
+        msg_text = template.format(**formatted)
+        if msg_text.strip():
+            logging.info(f"向群 {group_id} 发送消息: {msg_text}")
+            await send_group_msg(group_id, msg_text)
+    except Exception as e:
+        logging.warning(f"模板填充失败 (群 {group_id}): {e}")
+
+
+async def send_earthquake_image(group_id, event_data, source, config):
+    """发送地震图像到群组"""
+    if source not in config['draw_sources']:
+        return
+
+    filters = config['draw_filters'].get(source, {})
+    if not all(re.search(regex, str(event_data.get(field, ''))) for field, regex in filters.items()):
+        logging.info(f"数据源 {source} 未通过绘图过滤规则，跳过绘图")
+        return
+
+    # 检查是否有cwa提供的imageURI
+    if source == "cwa" and "imageURI" in event_data:
+        image_url = event_data["imageURI"]
+        logging.info(f"使用cwa提供的图片URL: {image_url}")
+        await download_and_send_cwa_image(group_id, image_url, event_data, config)
+    else:
+        # 非cwa数据源或没有imageURI字段，使用本地绘图
+        logging.info(f"为群 {group_id} 生成地震地图")
+        img_path = await asyncio.wait_for(
+            draw_earthquake_async(event_data),
+            timeout=config.get('draw_timeout', 10)
+        )
+        if img_path:
+            await send_group_img(group_id, img_path)
+            import os
+            os.remove(img_path)
+            logging.info(f"成功向群 {group_id} 发送地震地图")
+
+
+async def download_and_send_cwa_image(group_id, image_url, event_data, config):
+    """下载并发送CWA提供的图像"""
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status == 200:
+                    # 下载图片到临时文件
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
+                        tmp_file.write(await resp.read())
+                        tmp_file_path = tmp_file.name
+
+                    # 发送图片
+                    await send_group_img(group_id, tmp_file_path)
+                    os.remove(tmp_file_path)  # 发送后删除临时文件
+                    logging.info(f"成功向群 {group_id} 发送cwa提供的地震图片")
                 else:
-                    logging.info(f"数据源 {source} 未通过绘图过滤规则，跳过绘图")
+                    logging.warning(f"下载cwa图片失败，状态码: {resp.status}，切换到本地绘图")
+                    # 如果下载失败，使用本地绘图
+                    await send_local_earthquake_image(group_id, event_data, config)
+    except Exception as e:
+        logging.error(f"下载或发送cwa图片失败: {e}，切换到本地绘图")
+        # 如果下载或发送失败，使用本地绘图
+        await send_local_earthquake_image(group_id, event_data, config)
+
+
+async def send_local_earthquake_image(group_id, event_data, config):
+    """发送本地绘制的地震图像"""
+    img_path = await asyncio.wait_for(
+        draw_earthquake_async(event_data),
+        timeout=config.get('draw_timeout', 10)
+    )
+    if img_path:
+        await send_group_img(group_id, img_path)
+        import os
+        os.remove(img_path)
+        logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
+
+
+async def handle_heartbeat():
+    """处理心跳消息"""
+    global HEARTBEAT_COUNT
+    HEARTBEAT_COUNT += 1
+    if HEARTBEAT_COUNT % 5 == 0:
+        return json.dumps({"type": "ping"})
+    return None
+
+
+async def handle_initial_data(data, config):
+    """处理初始数据"""
+    logging.info("收到 FAN 初始全量数据")
+    # 存储initial数据，用于测试命令
+    initial_data = data.get('Data', [])
+    stored_count = 0
+    for item in initial_data:
+        source = item.get('source')
+        event_data = item.get('Data', {})
+        # 只存储有绘图功能的数据源
+        if source in config['draw_sources']:
+            initial_earthquake_data.append(item)
+            stored_count += 1
+    logging.info(f"解析 initial_all 数据: 总计 {len(initial_data)} 条，存储 {stored_count} 条用于绘图的数据源")
+    return None
+
+
+async def check_source_enabled(source, event_data, config):
+    """检查数据源是否启用并满足过滤规则"""
+    if not config['sources'].get(source, False):
+        logging.info(f"数据源 {source} 未启用，跳过处理")
+        return False
+
+    rule = config['source_rules'].get(source)
+    if rule and rule['enabled']:
+        field_value = str(event_data.get(rule['match_field'], ''))
+        if not re.search(rule['regex'], field_value):
+            logging.info(f"数据源 {source} 未通过过滤规则，跳过推送")
+            return False
+        else:
+            logging.info(f"数据源 {source} 通过过滤规则，准备推送")
+
+    return True
+
+
+async def process_message(message, config, target_group=None, apply_rules=True):
+    """
+    处理消息
+    :param message: 接收到的消息
+    :param config: 配置对象
+    :param target_group: 目标群组（可选）
+    :param apply_rules: 是否应用过滤规则
+    """
+    try:
+        data = json.loads(message)
+    except json.JSONDecodeError:
+        logging.error("FAN WS 消息解析失败")
+        return None
+
+    msg_type = data.get('type')
+
+    if msg_type == 'heartbeat':
+        return await handle_heartbeat()
+
+    if msg_type == 'initial_all':
+        return await handle_initial_data(data, config)
+
+    if msg_type != 'update':
+        return None
+
+    source = data.get('source')
+    event_data = data.get('Data', {})
+
+    logging.info(f"收到新消息: 数据源={source}, 时间={event_data.get('shockTime', '未知')}, "
+                 f"震级={event_data.get('magnitude', '未知')}, 位置={event_data.get('placeName', '未知')}")
+
+    # 检查数据源是否启用
+    if apply_rules:
+        if not await check_source_enabled(source, event_data, config):
+            return None
+
+    # 存储接收到的数据，用于测试命令（不管过滤规则如何）
+    if source in config['draw_sources']:  # 只存储需要绘图的数据源
+        received_earthquake_data[source] = event_data
+        logging.info(f"存储数据源 {source} 用于测试命令")
+
+    # 处理地震消息
+    await process_earthquake_message(event_data, source, config, target_group)
+
+    return None
+
 
 async def connect_to_fan_ws(config):
+    """连接到FAN的WebSocket服务"""
     uri = "wss://ws.fanstudio.tech/all"
     while True:
         try:
@@ -213,158 +284,17 @@ async def connect_to_fan_ws(config):
                     reply = await process_message(msg, config)
                     if reply:
                         await ws.send(reply)
+        except websockets.exceptions.ConnectionClosedOK:
+            logging.info("FAN WS 连接关闭，10秒后重连")
+            await asyncio.sleep(10)
         except Exception as e:
             logging.error(f"FAN WS 断开: {e}，10秒后重连")
             await asyncio.sleep(10)
 
-# 绕过规则检查直接处理消息
-async def process_message_without_rules(message, config, target_group=None):
-    try:
-        data = json.loads(message)
-    except json.JSONDecodeError:
-        logging.error("消息解析失败")
-        return
-
-    msg_type = data.get('type')
-    if msg_type != 'update':
-        return
-
-    source = data.get('source')
-    event_data = data.get('Data', {})
-
-    logging.info(f"[测试命令] 收到新消息: 数据源={source}, 时间={event_data.get('shockTime', '未知')}, "
-                 f"震级={event_data.get('magnitude', '未知')}, 位置={event_data.get('placeName', '未知')}")
-
-    # 推送目标
-    if target_group:
-        groups_to_push = [target_group]
-        logging.info(f"[测试命令] 指定推送群: {target_group}")
-    else:
-        groups_to_push = config['groups'].keys()
-        logging.info(f"[测试命令] 向所有配置群推送: {list(groups_to_push)}")
-
-    for group_id in groups_to_push:
-        group_config = config['groups'].get(group_id, {})
-        mode = group_config.get('mode', 'blacklist')
-        sources_list = group_config.get('sources', [])
-
-        # 检查推送规则
-        should_push = False
-        if mode == 'blacklist' and source not in sources_list:
-            should_push = True
-            logging.info(f"[测试命令] 群 {group_id}: 黑名单模式，数据源 {source} 不在黑名单中，推送")
-        elif mode == 'blacklist' and source in sources_list:
-            logging.info(f"[测试命令] 群 {group_id}: 黑名单模式，数据源 {source} 在黑名单中，跳过")
-            continue
-        elif mode == 'whitelist' and source in sources_list:
-            should_push = True
-            logging.info(f"[测试命令] 群 {group_id}: 白名单模式，数据源 {source} 在白名单中，推送")
-        elif mode == 'whitelist' and source not in sources_list:
-            logging.info(f"[测试命令] 群 {group_id}: 白名单模式，数据源 {source} 不在白名单中，跳过")
-            continue
-
-        if should_push:
-            template = config['message_templates'].get(source, config['message_templates'].get('default', ''))
-            if template:
-                try:
-                    def get_nested(d, path):
-                        keys = path.split('.')
-                        v = d
-                        for k in keys:
-                            v = v.get(k, '')
-                            if v == '':
-                                return ''
-                        return v
-
-                    placeholders = re.findall(r'\{([^{}]+)\}', template)
-                    formatted = {ph: get_nested(event_data, ph) for ph in placeholders}
-
-                    # 添加经纬度方向判断
-                    if 'longitude' in event_data and 'latitude' in event_data:
-                        lon = float(event_data['longitude'])
-                        lat = float(event_data['latitude'])
-                        # 格式化经纬度为带方向的形式
-                        lon_direction = "E" if lon >= 0 else "W"
-                        lat_direction = "N" if lat >= 0 else "S"
-                        formatted_lon = f"{abs(lon):.2f}°{lon_direction}"
-                        formatted_lat = f"{abs(lat):.2f}°{lat_direction}"
-                        # 添加到格式化字典中
-                        formatted['longitude_formatted'] = formatted_lon
-                        formatted['latitude_formatted'] = formatted_lat
-
-                    formatted['source_upper'] = source.upper()
-                    msg_text = template.format(**formatted)
-                    if msg_text.strip():
-                        logging.info(f"[测试命令] 向群 {group_id} 发送消息: {msg_text}")
-                        await send_group_msg(group_id, msg_text)
-                except Exception as e:
-                    logging.warning(f"[测试命令] 模板填充失败 (群 {group_id}): {e}")
-
-            # 绘图
-            if source in config['draw_sources']:
-                filters = config['draw_filters'].get(source, {})
-                if all(re.search(regex, str(event_data.get(field, ''))) for field, regex in filters.items()):
-                    # 检查是否有cwa提供的imageURI
-                    if source == "cwa" and "imageURI" in event_data:
-                        image_url = event_data["imageURI"]
-                        logging.info(f"[测试命令] 使用cwa提供的图片URL: {image_url}")
-                        try:
-                            import aiohttp
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(image_url) as resp:
-                                    if resp.status == 200:
-                                        # 下载图片到临时文件
-                                        import tempfile
-                                        import os
-                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
-                                            tmp_file.write(await resp.read())
-                                            tmp_file_path = tmp_file.name
-
-                                        # 发送图片
-                                        await send_group_img(group_id, tmp_file_path)
-                                        import os
-                                        os.remove(tmp_file_path)  # 发送后删除临时文件
-                                        logging.info(f"[测试命令] 成功向群 {group_id} 发送cwa提供的地震图片")
-                                    else:
-                                        logging.warning(f"[测试命令] 下载cwa图片失败，状态码: {resp.status}，切换到本地绘图")
-                                        # 如果下载失败，使用本地绘图
-                                        img_path = await asyncio.wait_for(
-                                            draw_earthquake_async(event_data),
-                                            timeout=config.get('draw_timeout', 10)
-                                        )
-                                        if img_path:
-                                            await send_group_img(group_id, img_path)
-                                            import os
-                                            os.remove(img_path)
-                                            logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
-                        except Exception as e:
-                            logging.error(f"[测试命令] 下载或发送cwa图片失败: {e}，切换到本地绘图")
-                            # 如果下载或发送失败，使用本地绘图
-                            img_path = await asyncio.wait_for(
-                                draw_earthquake_async(event_data),
-                                timeout=config.get('draw_timeout', 10)
-                            )
-                            if img_path:
-                                await send_group_img(group_id, img_path)
-                                import os
-                                os.remove(img_path)
-                                logging.info(f"[测试命令] 成功向群 {group_id} 发送本地绘制的地震地图")
-                    else:
-                        # 非cwa数据源或没有imageURI字段，使用本地绘图
-                        logging.info(f"[测试命令] 为群 {group_id} 生成地震地图")
-                        img_path = await asyncio.wait_for(
-                            draw_earthquake_async(event_data),
-                            timeout=config.get('draw_timeout', 10)
-                        )
-                        if img_path:
-                            await send_group_img(group_id, img_path)
-                            os.remove(img_path)
-                            logging.info(f"[测试命令] 成功向群 {group_id} 发送地震地图")
-                else:
-                    logging.info(f"[测试命令] 数据源 {source} 未通过绘图过滤规则，跳过绘图")
 
 # NapCat WebSocket 处理器（支持 Array 格式）
 async def napcat_ws_handler(websocket, path, config):
+    """处理来自NapCat的WebSocket消息"""
     try:
         async for message in websocket:
             # message 是字符串，可能为 JSON 对象或 Array
@@ -419,7 +349,7 @@ async def napcat_ws_handler(websocket, path, config):
                                 "source": source1,
                                 "Data": received_earthquake_data[source1]
                             }
-                            await process_message(json.dumps(test1), config, target_group=group_id)
+                            await process_message(json.dumps(test1), config, target_group=group_id, apply_rules=False)
 
                             # 构建测试消息2
                             test2 = {
@@ -427,7 +357,7 @@ async def napcat_ws_handler(websocket, path, config):
                                 "source": source2,
                                 "Data": received_earthquake_data[source2]
                             }
-                            await process_message(json.dumps(test2), config, target_group=group_id)
+                            await process_message(json.dumps(test2), config, target_group=group_id, apply_rules=False)
                         elif len(test_sources) == 1:
                             # 如果只有一个数据源，则使用该数据源两次
                             source1 = test_sources[0]
@@ -438,7 +368,7 @@ async def napcat_ws_handler(websocket, path, config):
                                 "source": source1,
                                 "Data": received_earthquake_data[source1]
                             }
-                            await process_message(json.dumps(test1), config, target_group=group_id)
+                            await process_message(json.dumps(test1), config, target_group=group_id, apply_rules=False)
 
                             # 构建测试消息2（使用相同的数据源，但添加测试标识）
                             test2_data = received_earthquake_data[source1].copy()
@@ -449,7 +379,7 @@ async def napcat_ws_handler(websocket, path, config):
                                 "source": source1,
                                 "Data": test2_data
                             }
-                            await process_message(json.dumps(test2), config, target_group=group_id)
+                            await process_message(json.dumps(test2), config, target_group=group_id, apply_rules=False)
                         else:
                             # 如果没有存储的数据，则使用硬编码的测试数据
                             # 测试1 cenc - 中国内部地震
@@ -467,7 +397,7 @@ async def napcat_ws_handler(websocket, path, config):
                                     "infoTypeName": "正式测定"
                                 }
                             }
-                            await process_message(json.dumps(test1), config, target_group=group_id)
+                            await process_message(json.dumps(test1), config, target_group=group_id, apply_rules=False)
 
                             # 测试2 usgs - 外国M5.0以上地震
                             test2 = {
@@ -484,7 +414,7 @@ async def napcat_ws_handler(websocket, path, config):
                                     "title": "M 6.2 - Near coast of Ecuador"
                                 }
                             }
-                            await process_message(json.dumps(test2), config, target_group=group_id)
+                            await process_message(json.dumps(test2), config, target_group=group_id, apply_rules=False)
 
                         await send_group_msg(group_id, "测试完成！请检查消息和图片。")
 

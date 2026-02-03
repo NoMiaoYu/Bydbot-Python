@@ -1,39 +1,110 @@
+"""
+EQBot - 地震信息推送机器人
+主程序入口
+"""
+
 import asyncio
 import json
 import logging
-from ws_handler import connect_to_fan_ws, napcat_ws_handler
+from typing import Dict, Any
+import websockets
+import os
+import signal
+import sys
 
-def setup_logging(log_file):
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    handler = logging.FileHandler(log_file, mode='w')  # 覆盖模式
-    handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logging.getLogger().addHandler(handler)
+from ws_handler import connect_to_fan_ws, napcat_ws_handler
+from message_sender import init_sender, close_sender
+
+
+def setup_logging(log_file: str) -> None:
+    """设置日志"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, mode='a', encoding='utf-8'),
+            logging.StreamHandler()  # 同时输出到控制台
+        ]
+    )
+
+
+def load_config(config_path: str = 'config.json') -> Dict[str, Any]:
+    """加载配置文件"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        return config
+    except FileNotFoundError:
+        raise FileNotFoundError(f"错误：找不到 {config_path} 配置文件")
+    except json.JSONDecodeError as e:
+        raise json.JSONDecodeError(f"错误：{config_path} 文件格式错误", e.doc, e.pos)
+    except Exception as e:
+        raise Exception(f"加载 {config_path} 失败: {e}")
+
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    """验证配置文件的必要字段"""
+    required_fields = ['napcat_http_url']
+    for field in required_fields:
+        if field not in config:
+            logging.error(f"配置文件缺少必要字段: {field}")
+            return False
+    return True
+
+
+async def shutdown_handler():
+    """关闭处理程序"""
+    logging.info("正在关闭EQBot...")
+    await close_sender()
+    logging.info("EQBot已关闭")
+
+
+def handle_signal(signum, frame):
+    """信号处理函数"""
+    logging.info(f"收到信号 {signum}，正在关闭...")
+    sys.exit(0)
+
 
 async def main():
+    """主程序入口"""
+    # 注册信号处理器
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    # 加载配置
     try:
-        with open('config.json', 'r', encoding='utf-8') as f:
-            config = json.load(f)
+        config = load_config()
     except Exception as e:
-        print(f"加载 config.json 失败: {e}")
+        logging.error(str(e))
         return
 
-    setup_logging(config.get('log_file', 'eqbot.log'))
+    # 验证配置
+    if not validate_config(config):
+        logging.error("配置验证失败，程序退出")
+        return
+
+    # 设置日志
+    log_file = config.get('log_file', 'eqbot.log')
+    setup_logging(log_file)
     logging.info("地震推送机器人启动")
 
-    from message_sender import init_sender
-    init_sender(config['napcat_http_url'], config.get('napcat_token', ''))
+    # 初始化消息发送器
+    napcat_url = config.get('napcat_http_url', 'http://127.0.0.1:3000')
+    token = config.get('napcat_token', '')
+    init_sender(napcat_url, token)
 
     # 启动 FAN WS 真实数据推送
-    asyncio.create_task(connect_to_fan_ws(config))
+    fan_ws_task = asyncio.create_task(connect_to_fan_ws(config))
 
     # 启动 NapCat 反向 WebSocket 服务器（用于接收群消息和命令）
+    server_task = None
     if config.get("enable_command_listener", True):
-        import websockets
-
+        ws_port = config.get("ws_port", 9998)
+        
         start_server = websockets.serve(
             lambda ws, path: napcat_ws_handler(ws, path, config),
             "0.0.0.0",
-            config["ws_port"],
+            ws_port,
             ping_interval=20,
             ping_timeout=20
         )
@@ -42,10 +113,30 @@ async def main():
         addr = server.sockets[0].getsockname()
         logging.info(f"NapCat 反向 WebSocket 服务器启动于 ws://0.0.0.0:{addr[1]} (用于接收群消息)")
 
-        await asyncio.Future()  # 保持运行
+        # 保持运行
+        server_task = asyncio.Future()  # 永远等待，直到被取消
+
     else:
         logging.warning("命令监听已禁用，只运行 FAN WS 推送")
-        await asyncio.Event().wait()
+        # 保持运行
+        server_task = asyncio.Event().wait()
+
+    try:
+        # 等待任务完成
+        await asyncio.gather(fan_ws_task, server_task)
+    except asyncio.CancelledError:
+        logging.info("任务被取消")
+    except Exception as e:
+        logging.error(f"主程序运行出错: {e}")
+    finally:
+        await shutdown_handler()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("程序被用户中断")
+    except Exception as e:
+        logging.error(f"程序运行出错: {e}")
+        raise
