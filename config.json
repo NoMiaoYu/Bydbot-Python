@@ -135,7 +135,7 @@
 
     "cea": "[CEA\\中国地震预警网 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}",
 
-    "cea-pr": "[CEA\\中国地震预警网 省级预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}\n| 发布省份: {province}",
+    "cea-pr": "[CEA\\中国地震预警网 · {province}地震局]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}",
 
     "sichuan": "[四川省地震局 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估烈度: {epiIntensity}\n| 数据类型: {infoTypeName}\n| 数据来源: {producer}\n| 发表时间: {createTime}",
 
@@ -174,7 +174,7 @@
     "fssn": "[FSSN 地震速报]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 发表时间: {createTime}\n| 区划: {placeName_zh}\n| 速报类型: {infoTypeName}"
     },
 
-  "draw_sources": ["fssn", "usgs", "jma", "cwa", "cenc"],
+  "draw_sources": ["fssn", "usgs", "jma", "cwa", "cenc", "cea", "cea-pr"],
 
   "draw_filters": {},
 

@@ -58,11 +58,11 @@ def draw_earthquake(data):
 
 def calculate_map_extent(lon, lat):
     """计算地图范围"""
-    extent_size_lon = 3  # 缩小视野以显示震源周围详细情况
-    extent_size_lat = 2.5 if abs(lat) < 60 else 3  # 考虑高纬度地区
+    extent_size_lon = 1  # 进一步缩小视野以显示震源周围更多详细情况
+    extent_size_lat = 1 if abs(lat) < 60 else 1.5  # 考虑高纬度地区，进一步缩小
     lon_min, lon_max = lon - extent_size_lon, lon + extent_size_lon
     lat_min, lat_max = lat - extent_size_lat, lat + extent_size_lat
-    
+
     return lon_min, lon_max, lat_min, lat_max
 
 
@@ -72,6 +72,7 @@ def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max):
     target_width_px, target_height_px = 1200, 900
     dpi = 180
 
+    # 为了防止黑边，我们先创建一个稍大的画布，然后裁剪到目标尺寸
     # 计算纵横比
     aspect_ratio = (lon_max - lon_min) / (lat_max - lat_min)
     target_width_inches = target_width_px / dpi
@@ -91,10 +92,16 @@ def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max):
         fig_height = target_height_inches
         fig_width = target_height_inches * aspect_ratio
 
+    # 为了防止黑边，稍微增加画布尺寸
+    scale_factor = 1.1  # 增加10%的画布尺寸
+    fig_width *= scale_factor
+    fig_height *= scale_factor
+
     # 绘制地图主体
     fig_map = plt.figure(figsize=(fig_width, fig_height), facecolor='black', dpi=dpi)
     ax_map = plt.axes(projection=ccrs.PlateCarree(central_longitude=lon), frameon=False)
-    ax_map.set_extent([lon_min - 0.5, lon_max + 0.5, lat_min - 0.5, lat_max + 0.5], crs=ccrs.PlateCarree())
+    # 使用精确的地图范围，不添加额外边距
+    ax_map.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
 
     # 设置地图特征
     set_map_features(ax_map, lon_min, lon_max, lat_min, lat_max, lat, lon)
@@ -111,7 +118,8 @@ def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max):
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_map:
         plt.savefig(
             tmp_map.name,
-            bbox_inches=0,
+            bbox_inches='tight',  # 使用tight边界以确保完全填充
+            pad_inches=0,         # 无内边距
             facecolor='black',
             edgecolor='black',
             dpi=dpi
@@ -179,14 +187,17 @@ def draw_china_faults(ax_map, lon_min, lon_max, lat_min, lat_max):
 
 def add_earthquake_marker(ax_map, lon, lat):
     """添加地震震中标记"""
+    # 由于地图视野缩小，震中标记也需要相应缩小
     # 白色外层描边 - 从左上到右下
-    ax_map.plot([lon-0.15, lon+0.15], [lat+0.15, lat-0.15], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
+    ax_map.plot([lon-0.025, lon+0.025], [lat+0.025, lat-0.025], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
     # 白色外层描边 - 从右上到左下
-    ax_map.plot([lon+0.15, lon-0.15], [lat+0.15, lat-0.15], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
+    ax_map.plot([lon+0.025, lon-0.025], [lat+0.025, lat-0.025], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
     # 红色交叉主体 - 从左上到右下
-    ax_map.plot([lon-0.14, lon+0.14], [lat+0.14, lat-0.14], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+    ax_map.plot([lon-0.02, lon+0.02], [lat+0.02, lat-0.02], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
     # 红色交叉主体 - 从右上到左下
-    ax_map.plot([lon+0.14, lon-0.14], [lat+0.14, lat-0.14], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+    ax_map.plot([lon+0.02, lon-0.02], [lat+0.02, lat-0.02], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+
+
 
 
 def add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat):
