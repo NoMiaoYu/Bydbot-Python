@@ -30,18 +30,101 @@ def get_nested_value(data, path):
 def format_coordinates(event_data):
     """格式化经纬度为带方向的形式"""
     formatted = {}
+
     if 'longitude' in event_data and 'latitude' in event_data:
-        lon = float(event_data['longitude'])
-        lat = float(event_data['latitude'])
+        # 处理经度
+        lon_raw = event_data['longitude']
+        lat_raw = event_data['latitude']
+
+        # 规范化经度值
+        lon = normalize_longitude(lon_raw)
+        # 规范化纬度值
+        lat = normalize_latitude(lat_raw)
+
         # 格式化经纬度为带方向的形式
         lon_direction = "E" if lon >= 0 else "W"
         lat_direction = "N" if lat >= 0 else "S"
         formatted_lon = f"{abs(lon):.2f}°{lon_direction}"
         formatted_lat = f"{abs(lat):.2f}°{lat_direction}"
+
         # 添加到格式化字典中
         formatted['longitude_formatted'] = formatted_lon
         formatted['latitude_formatted'] = formatted_lat
+        # 添加数值形式的经纬度，供绘图使用
+        formatted['longitude_normalized'] = lon
+        formatted['latitude_normalized'] = lat
+
     return formatted
+
+
+def normalize_longitude(lon):
+    """规范化经度值，确保在-180到180之间"""
+    try:
+        original_lon = lon  # 保存原始值用于方向检测
+
+        # 如果输入是字符串，尝试解析
+        if isinstance(lon, str):
+            # 检查是否包含方向字符
+            has_direction = 'E' in lon.upper() or 'W' in lon.upper()
+            is_west = 'W' in lon.upper()
+
+            # 移除可能的方向字符并转换为浮点数
+            lon_clean = lon.replace('°', '').replace('E', '').replace('W', '').strip()
+            lon = float(lon_clean)
+
+            # 如果原字符串包含方向且是西经，则转为负值
+            if has_direction and is_west:
+                lon = -abs(lon)
+            elif has_direction and not is_west:  # 东经显式标记
+                lon = abs(lon)
+        else:
+            lon = float(lon)
+
+        # 将经度标准化到-180到180的范围内
+        while lon > 180:
+            lon -= 360
+        while lon <= -180:
+            lon += 360
+
+        return lon
+    except (ValueError, TypeError):
+        logging.warning(f"无法解析经度值: {original_lon}")
+        return 0.0  # 返回默认值
+
+
+def normalize_latitude(lat):
+    """规范化纬度值，确保在-90到90之间"""
+    try:
+        original_lat = lat  # 保存原始值用于方向检测
+
+        # 如果输入是字符串，尝试解析
+        if isinstance(lat, str):
+            # 检查是否包含方向字符
+            has_direction = 'N' in lat.upper() or 'S' in lat.upper()
+            is_south = 'S' in lat.upper()
+
+            # 移除可能的方向字符并转换为浮点数
+            lat_clean = lat.replace('°', '').replace('N', '').replace('S', '').strip()
+            lat = float(lat_clean)
+
+            # 如果原字符串包含方向且是南纬，则转为负值
+            if has_direction and is_south:
+                lat = -abs(lat)
+            elif has_direction and not is_south:  # 北纬显式标记
+                lat = abs(lat)
+        else:
+            lat = float(lat)
+
+        # 将纬度标准化到-90到90的范围内
+        while lat > 90:
+            lat = 180 - lat
+        while lat < -90:
+            lat = -180 - lat
+
+        return lat
+    except (ValueError, TypeError):
+        logging.warning(f"无法解析纬度值: {original_lat}")
+        return 0.0  # 返回默认值
 
 
 def should_push_to_group(group_id, source, group_config):
@@ -102,6 +185,12 @@ async def send_earthquake_message(group_id, event_data, source, config):
         # 添加格式化坐标
         formatted.update(format_coordinates(event_data))
 
+        # 使用规范化后的经纬度替换原始经纬度值
+        if 'longitude_normalized' in formatted:
+            formatted['longitude'] = formatted['longitude_formatted']
+        if 'latitude_normalized' in formatted:
+            formatted['latitude'] = formatted['latitude_formatted']
+
         formatted['source_upper'] = source.upper()
         msg_text = template.format(**formatted)
         if msg_text.strip():
@@ -128,9 +217,17 @@ async def send_earthquake_image(group_id, event_data, source, config):
         await download_and_send_cwa_image(group_id, image_url, event_data, config)
     else:
         # 非cwa数据源或没有imageURI字段，使用本地绘图
+        # 使用规范化后的经纬度数据
+        normalized_event_data = event_data.copy()
+        formatted_coords = format_coordinates(event_data)
+        if 'longitude_normalized' in formatted_coords:
+            normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
+        if 'latitude_normalized' in formatted_coords:
+            normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
+
         logging.info(f"为群 {group_id} 生成地震地图")
         img_path = await asyncio.wait_for(
-            draw_earthquake_async(event_data),
+            draw_earthquake_async(normalized_event_data),
             timeout=config.get('draw_timeout', 10)
         )
         if img_path:
@@ -170,8 +267,16 @@ async def download_and_send_cwa_image(group_id, image_url, event_data, config):
 
 async def send_local_earthquake_image(group_id, event_data, config):
     """发送本地绘制的地震图像"""
+    # 使用规范化后的经纬度数据
+    normalized_event_data = event_data.copy()
+    formatted_coords = format_coordinates(event_data)
+    if 'longitude_normalized' in formatted_coords:
+        normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
+    if 'latitude_normalized' in formatted_coords:
+        normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
+
     img_path = await asyncio.wait_for(
-        draw_earthquake_async(event_data),
+        draw_earthquake_async(normalized_event_data),
         timeout=config.get('draw_timeout', 10)
     )
     if img_path:
