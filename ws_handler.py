@@ -24,6 +24,9 @@ processed_ids = set()
 # 用于存储待处理的绘图任务（源ID -> 任务信息）
 pending_draw_tasks = {}
 
+# 用于缓存已绘制的图片路径（消息ID -> 图片路径）
+cached_image_paths = {}
+
 
 async def init_db():
     """异步初始化数据库"""
@@ -80,7 +83,7 @@ async def load_recent_ids_from_db():
     return ids
 
 
-async def is_duplicate_message(event_data):
+async def is_duplicate_message(event_data, source):
     """异步检查消息是否重复"""
     # 尝试获取地震消息的唯一ID
     eq_id = event_data.get('id')
@@ -89,34 +92,42 @@ async def is_duplicate_message(event_data):
         # 如果没有ID，尝试使用其他字段组合生成唯一标识
         eq_id = f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}"
 
-    logging.debug(f"检查消息是否重复，ID: {eq_id}")
+    # 创建源+ID的组合键
+    composite_id = f"{source}_{eq_id}"
+    
+    logging.debug(f"检查消息是否重复，复合ID: {composite_id}")
 
     # 检查ID是否已经在内存中
-    if eq_id in processed_ids:
-        logging.info(f"发现重复消息（内存中），ID: {eq_id}")
+    if composite_id in processed_ids:
+        logging.info(f"发现重复消息（内存中），复合ID: {composite_id}")
         return True
 
     # 检查数据库中是否已有此ID
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE id = ?", (eq_id,)) as cursor:
+        async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE source = ? AND id = ?", (source, eq_id)) as cursor:
             count = await cursor.fetchone()
             count = count[0] if count else 0
 
     if count > 0:
-        logging.info(f"发现重复消息（数据库中），ID: {eq_id}")
+        logging.info(f"发现重复消息（数据库中），复合ID: {composite_id}")
         # 将ID加入内存集合，避免后续重复检查
-        processed_ids.add(eq_id)
+        processed_ids.add(composite_id)
         return True
 
     # 如果不是重复消息，将ID加入内存集合
-    logging.debug(f"新消息，ID: {eq_id}，已加入内存集合")
-    processed_ids.add(eq_id)
+    logging.debug(f"新消息，复合ID: {composite_id}，已加入内存集合")
+    processed_ids.add(composite_id)
     return False
 
 
-async def is_recent_duplicate_by_time(event_data, time_window_minutes=5):
+async def is_recent_duplicate_by_time(event_data, source, time_window_minutes=5):
     """基于时间窗口检查是否为近期重复消息（防止相同事件的不同报告）"""
+    # 排除非地震源
+    non_earthquake_sources = {'weatheralarm', 'tsunami'}
+    if source in non_earthquake_sources:
+        return False
+        
     shock_time_str = event_data.get('shockTime')
     if not shock_time_str:
         return False
@@ -154,13 +165,15 @@ async def is_recent_duplicate_by_time(event_data, time_window_minutes=5):
         query = """
             SELECT id, shock_time, latitude, longitude, magnitude 
             FROM earthquakes 
-            WHERE created_at >= ? 
+            WHERE source = ?
+            AND created_at >= ? 
             AND ABS(latitude - ?) <= 0.5 
             AND ABS(longitude - ?) <= 0.5 
             AND ABS(magnitude - ?) <= 0.3
         """
         
         async with db.execute(query, (
+            source,
             time_threshold.strftime('%Y-%m-%d %H:%M:%S'),
             float(latitude),
             float(longitude), 
@@ -337,6 +350,102 @@ def normalize_latitude(lat):
         return 0.0  # 返回默认值
 
 
+def apply_field_rules(event_data, source, config):
+    """
+    应用字段规则到事件数据
+    :param event_data: 原始事件数据
+    :param source: 数据源名称
+    :param config: 配置字典
+    :return: 处理后的事件数据副本
+    """
+    field_rules = config.get('field_rules', {})
+    source_rules = field_rules.get(source, {})
+    
+    if not source_rules:
+        return event_data.copy()
+    
+    # 创建事件数据的副本以避免修改原始数据
+    processed_data = event_data.copy()
+    
+    for field_name, rules in source_rules.items():
+        if field_name not in processed_data:
+            continue
+            
+        field_value = processed_data[field_name]
+        
+        # 应用所有规则（按顺序）
+        for rule in rules:
+            try:
+                condition = rule.get('condition', '')
+                true_value = rule.get('true_value', '{value}')
+                false_value = rule.get('false_value', '{value}')
+                
+                # 准备条件评估的上下文
+                context = {
+                    'value': field_value,
+                    'str': str,
+                    'int': int,
+                    'float': float,
+                    'len': len,
+                    'in': lambda x, y: x in y,
+                    'not_in': lambda x, y: x not in y
+                }
+                
+                # 安全地评估条件
+                if evaluate_condition(condition, field_value, context):
+                    # 使用true_value替换
+                    processed_data[field_name] = true_value.format(value=field_value)
+                    break  # 条件满足后跳出，不再应用后续规则
+                else:
+                    # 使用false_value替换，但继续检查后续规则
+                    processed_data[field_name] = false_value.format(value=field_value)
+                    
+            except Exception as e:
+                logging.warning(f"应用字段规则时出错 (source={source}, field={field_name}): {e}")
+                continue
+    
+    return processed_data
+
+
+def evaluate_condition(condition, value, context):
+    """
+    安全地评估条件表达式
+    :param condition: 条件字符串
+    :param value: 字段值
+    :param context: 评估上下文
+    :return: 布尔值
+    """
+    if not condition:
+        return False
+        
+    try:
+        # 替换value为实际值的字符串表示
+        safe_condition = condition.replace('value', 'context["value"]')
+        
+        # 限制可用的内置函数和操作符
+        allowed_names = {
+            "__builtins__": {},
+            "context": context,
+            "str": str,
+            "int": int,
+            "float": float,
+            "len": len,
+            "abs": abs,
+            "min": min,
+            "max": max,
+            "round": round,
+            "True": True,
+            "False": False,
+            "None": None
+        }
+        
+        result = eval(safe_condition, allowed_names)
+        return bool(result)
+    except Exception as e:
+        logging.warning(f"条件评估失败: {condition}, 错误: {e}")
+        return False
+
+
 def should_push_to_group(group_id, source, group_config):
     """检查是否应该推送消息到群组"""
     mode = group_config.get('mode', 'blacklist')
@@ -389,11 +498,14 @@ async def send_earthquake_message(group_id, event_data, source, config):
         return
 
     try:
+        # 应用字段规则
+        processed_event_data = apply_field_rules(event_data, source, config)
+        
         placeholders = re.findall(r'\{([^{}]+)\}', template)
-        formatted = {ph: get_nested_value(event_data, ph) for ph in placeholders}
+        formatted = {ph: get_nested_value(processed_event_data, ph) for ph in placeholders}
 
         # 添加格式化坐标
-        formatted.update(format_coordinates(event_data))
+        formatted.update(format_coordinates(processed_event_data))
 
         # 使用规范化后的经纬度替换原始经纬度值
         if 'longitude_normalized' in formatted:
@@ -427,9 +539,28 @@ async def send_earthquake_image(group_id, event_data, source, config):
         await download_and_send_cwa_image(group_id, image_url, event_data, config)
     else:
         # 非cwa数据源或没有imageURI字段，使用本地绘图
+        
+        # 获取消息ID用于缓存
+        msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
+        
+        # 检查是否已有缓存的图片
+        if msg_id in cached_image_paths:
+            img_path = cached_image_paths[msg_id]
+            if os.path.exists(img_path):
+                logging.info(f"复用已缓存的图片: {img_path}")
+                await send_group_img(group_id, img_path)
+                return
+            else:
+                # 缓存的文件不存在，移除缓存
+                del cached_image_paths[msg_id]
+                logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
+        
+        # 应用字段规则（但保留原始数值用于绘图）
+        processed_event_data = apply_field_rules(event_data, source, config)
+        
         # 使用规范化后的经纬度数据
-        normalized_event_data = event_data.copy()
-        formatted_coords = format_coordinates(event_data)
+        normalized_event_data = processed_event_data.copy()
+        formatted_coords = format_coordinates(processed_event_data)
         if 'longitude_normalized' in formatted_coords:
             normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
         if 'latitude_normalized' in formatted_coords:
@@ -440,13 +571,14 @@ async def send_earthquake_image(group_id, event_data, source, config):
 
         logging.info(f"为群 {group_id} 生成地震地图")
         img_path = await asyncio.wait_for(
-            draw_earthquake_async(normalized_event_data),
-            timeout=config.get('draw_timeout', 10)
+            draw_earthquake_async(normalized_event_data, source),
+            timeout=config.get('draw_timeout', 20)
         )
         if img_path:
+            # 缓存图片路径
+            cached_image_paths[msg_id] = img_path
             await send_group_img(group_id, img_path)
-            os.remove(img_path)
-            logging.info(f"成功向群 {group_id} 发送地震地图")
+            logging.info(f"成功向群 {group_id} 发送地震地图: {img_path}")
 
 
 async def download_and_send_cwa_image(group_id, image_url, event_data, config):
@@ -479,6 +611,24 @@ async def download_and_send_cwa_image(group_id, image_url, event_data, config):
 
 async def send_local_earthquake_image(group_id, event_data, config):
     """发送本地绘制的地震图像"""
+    # 获取数据源（从event_data中提取，如果有的话）
+    source = event_data.get('_source', 'unknown')
+    
+    # 获取消息ID用于缓存
+    msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
+    
+    # 检查是否已有缓存的图片
+    if msg_id in cached_image_paths:
+        img_path = cached_image_paths[msg_id]
+        if os.path.exists(img_path):
+            logging.info(f"复用已缓存的图片: {img_path}")
+            await send_group_img(group_id, img_path)
+            return
+        else:
+            # 缓存的文件不存在，移除缓存
+            del cached_image_paths[msg_id]
+            logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
+    
     # 使用规范化后的经纬度数据
     normalized_event_data = event_data.copy()
     formatted_coords = format_coordinates(event_data)
@@ -487,19 +637,17 @@ async def send_local_earthquake_image(group_id, event_data, config):
     if 'latitude_normalized' in formatted_coords:
         normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
     
-    # 获取数据源（从event_data中提取，如果有的话）
-    source = event_data.get('_source', 'unknown')
     normalized_event_data['_source'] = source
 
     img_path = await asyncio.wait_for(
-        draw_earthquake_async(normalized_event_data),
-        timeout=config.get('draw_timeout', 10)
+        draw_earthquake_async(normalized_event_data, source),
+        timeout=config.get('draw_timeout', 20)
     )
     if img_path:
+        # 缓存图片路径
+        cached_image_paths[msg_id] = img_path
         await send_group_img(group_id, img_path)
-        import os
-        os.remove(img_path)
-        logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图")
+        logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图: {img_path}")
 
 
 async def handle_heartbeat():
@@ -555,11 +703,11 @@ async def check_source_enabled(source, event_data, config):
     return True
 
 
-async def get_stored_earthquake_data(eq_id):
+async def get_stored_earthquake_data(eq_id, source):
     """从数据库获取已存储的地震数据"""
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     async with aiosqlite.connect(db_path) as db:
-        async with db.execute("SELECT data_json FROM earthquakes WHERE id = ?", (eq_id,)) as cursor:
+        async with db.execute("SELECT data_json FROM earthquakes WHERE source = ? AND id = ?", (source, eq_id)) as cursor:
             row = await cursor.fetchone()
             if row:
                 return json.loads(row[0])
@@ -631,7 +779,7 @@ async def delayed_draw_and_send(event_data, source, config, target_group=None):
                 continue
 
             try:
-                # 绘制并发送图片
+                # 绘制并发送图片（使用复用逻辑）
                 await send_earthquake_image(group_id, event_data, source, config)
             except Exception as e:
                 logging.error(f"向群 {group_id} 发送地震图片失败: {e}")
@@ -643,8 +791,13 @@ async def delayed_draw_and_send(event_data, source, config, target_group=None):
         logging.error(f"延迟绘图失败: {e}")
 
 
-async def is_within_time_window(event_data, max_hours=1):
+async def is_within_time_window(event_data, source, max_hours=1):
     """检查地震事件是否在指定时间窗口内（默认1小时）"""
+    # 排除非地震源，这些源不需要时间窗口检查
+    non_earthquake_sources = {'weatheralarm', 'tsunami'}
+    if source in non_earthquake_sources:
+        return True
+        
     shock_time_str = event_data.get('shockTime')
     if not shock_time_str:
         logging.warning("消息缺少震发时间，跳过处理")
@@ -709,48 +862,51 @@ async def process_message(message, config, target_group=None, apply_rules=True):
     if not eq_id:
         eq_id = f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}"
 
+    # 创建源+ID的组合键用于去重
+    composite_id = f"{source}_{eq_id}"
+
     # 检查是否为重复消息但有数据更新
     is_duplicate = False
     has_update = False
     
     # 检查内存中的重复
-    if eq_id in processed_ids:
+    if composite_id in processed_ids:
         is_duplicate = True
         # 获取已存储的数据进行比较
-        stored_data = await get_stored_earthquake_data(eq_id)
+        stored_data = await get_stored_earthquake_data(eq_id, source)
         has_update = has_significant_update(stored_data, event_data)
         if has_update:
-            logging.info(f"发现重复消息但有显著更新，ID: {eq_id}")
+            logging.info(f"发现重复消息但有显著更新，复合ID: {composite_id}")
         else:
-            logging.info(f"发现重复消息且无更新，跳过处理: {eq_id}")
+            logging.info(f"发现重复消息且无更新，跳过处理: {composite_id}")
             return None
     else:
         # 检查数据库中的重复
         db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
         async with aiosqlite.connect(db_path) as db:
-            async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE id = ?", (eq_id,)) as cursor:
+            async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE source = ? AND id = ?", (source, eq_id)) as cursor:
                 count = await cursor.fetchone()
                 count = count[0] if count else 0
         
         if count > 0:
             is_duplicate = True
-            stored_data = await get_stored_earthquake_data(eq_id)
+            stored_data = await get_stored_earthquake_data(eq_id, source)
             has_update = has_significant_update(stored_data, event_data)
             if has_update:
-                logging.info(f"发现重复消息但有显著更新（数据库中），ID: {eq_id}")
+                logging.info(f"发现重复消息但有显著更新（数据库中），复合ID: {composite_id}")
             else:
-                logging.info(f"发现重复消息且无更新（数据库中），跳过处理: {eq_id}")
+                logging.info(f"发现重复消息且无更新（数据库中），跳过处理: {composite_id}")
                 # 将ID加入内存集合避免后续重复检查
-                processed_ids.add(eq_id)
+                processed_ids.add(composite_id)
                 return None
     
     # 如果不是重复消息或有更新，则继续处理
     if not is_duplicate or has_update:
         # 将ID加入内存集合
-        processed_ids.add(eq_id)
+        processed_ids.add(composite_id)
         
         # 一收到消息就进行时间校验（仅处理1小时内发生的地震）
-        if not await is_within_time_window(event_data, max_hours=1):
+        if not await is_within_time_window(event_data, source, max_hours=1):
             logging.info(f"地震事件超出1小时时间窗口，跳过处理: {event_data.get('id', 'unknown')}")
             return None
 

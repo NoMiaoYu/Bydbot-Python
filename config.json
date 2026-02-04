@@ -178,6 +178,9 @@
 
   "draw_filters": {},
 
-  "draw_timeout": 20
- 
+  "draw_timeout": 20,
+
+  "field_rules": {
+    
+  }
 }

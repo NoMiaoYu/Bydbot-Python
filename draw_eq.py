@@ -10,19 +10,20 @@ import tempfile
 import numpy as np
 import os
 
+
 # 全局配置
 plt.rcParams['font.sans-serif'] = ['Minecraft AE']
 plt.rcParams['axes.unicode_minus'] = False
 plt.ioff()
 
 
-async def draw_earthquake_async(data):
+async def draw_earthquake_async(data, source=None):
     """异步绘制地震地图"""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, draw_earthquake, data)
+    return await loop.run_in_executor(None, draw_earthquake, data, source)
 
 
-def draw_earthquake(data):
+def draw_earthquake(data, source=None):
     """绘制地震地图的主要函数"""
     try:
         # 提取地震数据
@@ -38,13 +39,13 @@ def draw_earthquake(data):
         lon_min, lon_max, lat_min, lat_max = map_extent
 
         # 获取数据源信息（如果存在）
-        data_source = data.get('_source', None)
+        data_source = data.get('_source', source)
 
         # 创建地图图像
         temp_map_path = create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max, data_source)
 
         # 在地图上添加信息框
-        final_image_path = add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat)
+        final_image_path = add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat, data_source)
 
         # 清理临时文件
         if os.path.exists(temp_map_path):
@@ -61,8 +62,8 @@ def draw_earthquake(data):
 
 def calculate_map_extent(lon, lat):
     """计算地图范围"""
-    extent_size_lon = 1  # 进一步缩小视野以显示震源周围更多详细情况
-    extent_size_lat = 1 if abs(lat) < 60 else 1.5  # 考虑高纬度地区，进一步缩小
+    extent_size_lon = 0.9  # 缩小视野以显示震源周围更多详细情况（原值1.0，现在放大0.1）
+    extent_size_lat = 0.9 if abs(lat) < 60 else 1.35  # 考虑高纬度地区，相应缩小（原值1.0/1.5，现在放大0.1）
     lon_min, lon_max = lon - extent_size_lon, lon + extent_size_lon
     lat_min, lat_max = lat - extent_size_lat, lat + extent_size_lat
 
@@ -200,9 +201,7 @@ def add_earthquake_marker(ax_map, lon, lat):
     ax_map.plot([lon+0.02, lon-0.02], [lat+0.02, lat-0.02], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
 
 
-
-
-def add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat):
+def add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat, source=None):
     """在地图图像上添加信息框"""
     # 读取临时图像
     img = plt.imread(temp_map_path)
@@ -233,16 +232,30 @@ def add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat):
     # 添加信息框
     add_info_text(ax_final, time, place, info_type, mag, lon, lat)
 
-    # 保存最终图像
-    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_final:
-        plt.savefig(
-            tmp_final.name,
-            bbox_inches=0,
-            facecolor='black',
-            dpi=dpi
-        )
-        plt.close(fig_final)
-        return tmp_final.name
+    # 保存最终图像到自定义目录
+    if source:
+        # 创建 pictures/{source} 目录
+        pictures_dir = os.path.join(os.path.dirname(__file__), 'pictures', source)
+        os.makedirs(pictures_dir, exist_ok=True)
+        
+        # 生成唯一的文件名
+        import time as time_module
+        timestamp = int(time_module.time() * 1000)
+        filename = f"eq_{timestamp}.png"
+        final_path = os.path.join(pictures_dir, filename)
+    else:
+        # 使用临时文件（向后兼容）
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_final:
+            final_path = tmp_final.name
+
+    plt.savefig(
+        final_path,
+        bbox_inches=0,
+        facecolor='black',
+        dpi=dpi
+    )
+    plt.close(fig_final)
+    return final_path
 
 
 def ensure_minimum_size(img, target_width_px, target_height_px, h, w):
