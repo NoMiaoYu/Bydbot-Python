@@ -37,8 +37,11 @@ def draw_earthquake(data):
         map_extent = calculate_map_extent(lon, lat)
         lon_min, lon_max, lat_min, lat_max = map_extent
 
+        # 获取数据源信息（如果存在）
+        data_source = data.get('_source', None)
+
         # 创建地图图像
-        temp_map_path = create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max)
+        temp_map_path = create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max, data_source)
 
         # 在地图上添加信息框
         final_image_path = add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat)
@@ -66,7 +69,7 @@ def calculate_map_extent(lon, lat):
     return lon_min, lon_max, lat_min, lat_max
 
 
-def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max):
+def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max, data_source=None):
     """创建基础地图图像"""
     # 固定画布尺寸 1200x900 像素
     target_width_px, target_height_px = 1200, 900
@@ -104,7 +107,7 @@ def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max):
     ax_map.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
 
     # 设置地图特征
-    set_map_features(ax_map, lon_min, lon_max, lat_min, lat_max, lat, lon)
+    set_map_features(ax_map, lon_min, lon_max, lat_min, lat_max, lat, lon, data_source)
 
     # 添加震中标记
     add_earthquake_marker(ax_map, lon, lat)
@@ -128,7 +131,7 @@ def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max):
         return tmp_map.name
 
 
-def set_map_features(ax_map, lon_min, lon_max, lat_min, lat_max, lat, lon):
+def set_map_features(ax_map, lon_min, lon_max, lat_min, lat_max, lat, lon, data_source=None):
     """设置地图特征，包括陆地、海洋、边界等"""
     ax_map.margins(0)
 
@@ -141,9 +144,8 @@ def set_map_features(ax_map, lon_min, lon_max, lat_min, lat_max, lat, lon):
     ax_map.add_feature(cfeature.BORDERS, edgecolor='white', linewidth=0.4, linestyle='--')
     ax_map.add_feature(cfeature.STATES, linewidth=0.3, edgecolor='gray', facecolor='none', alpha=0.5)
 
-    # 性能优化：仅在中国范围内绘制断层
-    is_in_china = (73 <= lon <= 135) and (18 <= lat <= 54)
-    if is_in_china:
+    # 只有cenc、cea和cea-pr数据源才绘制中国断层
+    if data_source in ['cenc', 'cea', 'cea-pr']:
         draw_china_faults(ax_map, lon_min, lon_max, lat_min, lat_max)
 
 

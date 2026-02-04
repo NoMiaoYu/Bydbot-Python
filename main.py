@@ -12,12 +12,20 @@ import os
 import signal
 import sys
 
-from ws_handler import connect_to_fan_ws, napcat_ws_handler
+from ws_handler import connect_to_fan_ws, napcat_ws_handler, init_db, load_recent_ids_from_db
 from message_sender import init_sender, close_sender
 
 
 def setup_logging(log_file: str) -> None:
     """设置日志"""
+    # 确保data目录存在
+    data_dir = os.path.join(os.path.dirname(__file__), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+
+    # 如果日志文件在根目录，移动到data目录
+    if not log_file.startswith(os.path.join(data_dir, '')):
+        log_file = os.path.join(data_dir, os.path.basename(log_file))
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
@@ -88,6 +96,14 @@ async def main():
     setup_logging(log_file)
     logging.info("地震推送机器人启动")
 
+    # 初始化数据库
+    db_path = await init_db()
+
+    # 加载最近2周的地震消息ID到内存
+    from ws_handler import processed_ids
+    recent_ids = await load_recent_ids_from_db()
+    processed_ids.update(recent_ids)
+
     # 初始化消息发送器
     napcat_url = config.get('napcat_http_url', 'http://127.0.0.1:3000')
     token = config.get('napcat_token', '')
@@ -100,7 +116,7 @@ async def main():
     server_task = None
     if config.get("enable_command_listener", True):
         ws_port = config.get("ws_port", 9998)
-        
+
         start_server = websockets.serve(
             lambda ws, path: napcat_ws_handler(ws, path, config),
             "0.0.0.0",
