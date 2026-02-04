@@ -23,7 +23,7 @@
   },
 
   "sources": {
-    "weatheralarm": true,
+  "weatheralarm": false,
     "tsunami": true,
     "cenc": true,
     "cea": true,
@@ -94,11 +94,6 @@
       "match_field": "magnitude",
       "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
     },
-    "fssn": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
     "sichuan": {
       "enabled": true,
       "match_field": "magnitude",
@@ -151,7 +146,7 @@
 
     "cwa-eew": "[CWA\\台湾气象署 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估最大震度: {maxIntensity}",
 
-    "jma": "[JMA\\日本气象厅 · {infoTypeName}]\n第 {updates} 报\n| 发生时间(JST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 最大震度: {epiIntensity}\n| 状态: {final}\\{cancel}",
+    "jma": "[JMA\\日本气象厅 · {infoTypeName}]\n|{final}\\{cancel}\n| 第 {updates} 报\n| 发生时间(JST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 最大震度: {epiIntensity}",
 
     "hko": "[HKO\\香港天文台 地震信息]\n| 发生时间(HKT): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 位置描述: {citystring}\n| 区域: {region}\n| 数据核验: {verify}",
 
@@ -181,6 +176,35 @@
   "draw_timeout": 20,
 
   "field_rules": {
-    
+    "usgs": {
+      "infoTypeName": [
+        {
+          "condition": "value == 'automatic'",
+          "true_value": "自动测定",
+          "false_value": "{value}"
+        },
+        {
+          "condition": "value == 'reviewed'",
+          "true_value": "正式测定",
+          "false_value": "{value}"
+        }
+      ]
+    },
+    "jma": {
+      "final": [
+        {
+          "condition": "value == True or str(value).lower() == 'true'",
+          "true_value": "最终报",
+          "false_value": ""
+        }
+      ],
+      "cancel": [
+        {
+          "condition": "value == True or str(value).lower() == 'true'",
+          "true_value": "取消",
+          "false_value": ""
+        }
+      ]
+    }
   }
 }
