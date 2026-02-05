@@ -399,3 +399,7 @@ def calculate_textbox_width(fig, info_text, font_size):
     except:
         # 如果无法精确计算，使用默认宽度
         return 0.4
+"""
+Bydbot - 绘图模块
+负责生成地震相关图像
+"""

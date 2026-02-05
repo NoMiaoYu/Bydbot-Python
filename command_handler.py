@@ -38,7 +38,7 @@ def is_valid_test_command_event(event: Dict[str, Any], config: Dict[str, Any]) -
 
     # 检查是否为测试命令
     raw_message = event.get("raw_message", "").strip()
-    test_cmd = config.get("test_command", "/eqbottest")
+    test_cmd = config.get("test_command", "/bydbottest")
     
     return raw_message == test_cmd
 

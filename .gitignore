@@ -1,11 +1,6 @@
-# Python cache files
+*.md
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-实现/
-*.*
-
-./
-*.log
+pictures/
+Docs/
+data/
+*.gmt

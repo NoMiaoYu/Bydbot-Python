@@ -6,14 +6,26 @@ Bydbot - 多功能信息推送机器人
 import asyncio
 import json
 import logging
-from typing import Dict, Any
-import websockets
 import os
 import signal
 import sys
+from typing import Dict, Any
 
-from ws_handler import connect_to_fan_ws, napcat_ws_handler, init_db, load_recent_ids_from_db
-from message_sender import init_sender, close_sender
+import websockets
+
+# 设置事件循环策略（Windows兼容性）
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def load_config() -> Dict[str, Any]:
+    """加载配置文件"""
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"配置文件 {config_path} 不存在，请创建 config.json")
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 
 def setup_logging(log_file: str) -> None:
@@ -36,18 +48,46 @@ def setup_logging(log_file: str) -> None:
     )
 
 
-def load_config(config_path: str = 'config.json') -> Dict[str, Any]:
-    """加载配置文件"""
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-        return config
-    except FileNotFoundError:
-        raise FileNotFoundError(f"错误：找不到 {config_path} 配置文件")
-    except json.JSONDecodeError as e:
-        raise json.JSONDecodeError(f"错误：{config_path} 文件格式错误", e.doc, e.pos)
-    except Exception as e:
-        raise Exception(f"加载 {config_path} 失败: {e}")
+async def init_db():
+    """初始化数据库 - 委托给ws_handler"""
+    from ws_handler import init_db as ws_init_db
+    return await ws_init_db()
+
+
+async def load_recent_ids_from_db():
+    """从数据库加载最近的ID - 委托给ws_handler"""
+    from ws_handler import load_recent_ids_from_db as ws_load_recent_ids
+    return await ws_load_recent_ids()
+
+
+async def close_sender():
+    """关闭消息发送器"""
+    from message_sender import close_sender as close_msg_sender
+    await close_msg_sender()
+
+
+def init_sender(napcat_url: str, token: str):
+    """初始化消息发送器"""
+    from message_sender import init_sender as init_msg_sender
+    init_msg_sender(napcat_url, token)
+
+
+async def napcat_ws_handler(websocket, path, config):
+    """处理NapCat WebSocket连接"""
+    from command_handler import handle_command
+    
+    async for message in websocket:
+        try:
+            event = json.loads(message)
+            await handle_command(event, config)
+        except Exception as e:
+            logging.error(f"NapCat WebSocket 处理错误: {e}")
+
+
+async def connect_to_fan_ws(config):
+    """连接到FAN WebSocket"""
+    from ws_handler import connect_to_fan_ws as connect_fan
+    await connect_fan(config)
 
 
 def validate_config(config: Dict[str, Any]) -> bool:
@@ -62,9 +102,9 @@ def validate_config(config: Dict[str, Any]) -> bool:
 
 async def shutdown_handler():
     """关闭处理程序"""
-    logging.info("正在关闭EQBot...")
+    logging.info("正在关闭Bydbot...")
     await close_sender()
-    logging.info("EQBot已关闭")
+    logging.info("Bydbot已关闭")
 
 
 def handle_signal(signum, frame):

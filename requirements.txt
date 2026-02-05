@@ -3,4 +3,5 @@ websockets
 matplotlib
 cartopy
 numpy
+Pillow
 aiosqlite

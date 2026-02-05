@@ -6,6 +6,13 @@ from typing import Optional
 SESSION = None
 HEADERS = {}
 
+
+"""
+Bydbot - 消息发送器
+负责向QQ群发送文本和图片消息
+"""
+
+
 def init_sender(url: str, token: str) -> None:
     """
     初始化消息发送器

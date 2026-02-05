@@ -1119,3 +1119,7 @@ async def napcat_ws_handler(websocket, path, config):
         logging.info("NapCat WS 正常关闭")
     except Exception as e:
         logging.error(f"NapCat WS 处理异常: {e}")
+"""
+Bydbot - WebSocket处理器
+处理FAN WebSocket连接和消息处理
+"""
