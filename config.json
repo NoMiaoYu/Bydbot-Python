@@ -7,6 +7,12 @@
   "test_command": "/bydbottest",
   "test_groups_only": false,
 
+  "owner_id": "180456825",
+
+ 
+  "weather_api_enabled": true,
+  "weather_api_daily_limit": 1500,
+
   "groups": {
     "1071528933": {
       "mode": "blacklist",

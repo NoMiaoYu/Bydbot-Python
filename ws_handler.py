@@ -54,9 +54,27 @@ async def init_db():
             )
         ''')
 
-        # 创建索引以提高查询速度
+        # 创建API使用统计表
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS weather_api_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,          -- YYYY-MM-DD
+                month TEXT NOT NULL,         -- YYYY-MM
+                group_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                command TEXT NOT NULL,
+                api_endpoint TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # 创建索引以提高查询性能
         await db.execute('CREATE INDEX IF NOT EXISTS idx_shock_time ON earthquakes(shock_time)')
         await db.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON earthquakes(created_at)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_date ON weather_api_usage(date)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_month ON weather_api_usage(month)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_group ON weather_api_usage(group_id)')
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_user ON weather_api_usage(user_id)')
 
         await db.commit()
 
@@ -989,137 +1007,129 @@ async def connect_to_fan_ws(config):
             await asyncio.sleep(10)
 
 
-# NapCat WebSocket 处理器（支持 Array 格式）
-async def napcat_ws_handler(websocket, path, config):
-    """处理来自NapCat的WebSocket消息"""
-    try:
-        async for message in websocket:
-            # message 是字符串，可能为 JSON 对象或 Array
-            logging.debug(f"NapCat 收到消息: {message[:300]}...")
+# API使用统计相关函数
+async def record_weather_api_usage(group_id: str, user_id: str, command: str, api_endpoint: str):
+    """记录天气API调用"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    current_month = datetime.now().strftime('%Y-%m')
+    
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            '''INSERT INTO weather_api_usage (date, month, group_id, user_id, command, api_endpoint) 
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (current_date, current_month, group_id, user_id, command, api_endpoint)
+        )
+        await db.commit()
 
-            try:
-                event_data = json.loads(message)
-            except json.JSONDecodeError:
-                logging.warning("NapCat 消息非有效 JSON")
-                continue
 
-            # 处理 Array 或单个对象
-            events = event_data if isinstance(event_data, list) else [event_data]
+async def get_daily_usage_count():
+    """获取今日API调用次数"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT COUNT(*) FROM weather_api_usage WHERE date = ?', 
+            (current_date,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
-            for event in events:
-                if not isinstance(event, dict):
-                    continue
 
-                post_type = event.get('post_type')
-                if post_type in ('meta_event', 'heartbeat'):
-                    continue  # 忽略心跳和 meta
+async def get_monthly_usage_count():
+    """获取本月API调用次数"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    current_month = datetime.now().strftime('%Y-%m')
+    
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            'SELECT COUNT(*) FROM weather_api_usage WHERE month = ?', 
+            (current_month,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
-                if post_type == 'message' and event.get('message_type') == 'group':
-                    group_id = str(event.get('group_id', ''))
-                    # 处理 message 内容（Array 或 string）
-                    msg_content = event.get('message', '')
-                    if isinstance(msg_content, list):
-                        raw_message = ''.join(
-                            seg.get('data', {}).get('text', '')
-                            for seg in msg_content if seg.get('type') == 'text'
-                        ).strip()
-                    else:
-                        raw_message = str(msg_content).strip()
 
-                    test_cmd = config.get('test_command', '/eqbottest')
-                    if raw_message == test_cmd:
-                        logging.info(f"收到测试命令 来自群 {group_id}")
+async def get_top_users_daily():
+    """获取今日调用最多的用户"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            '''SELECT group_id, user_id, COUNT(*) as count 
+               FROM weather_api_usage 
+               WHERE date = ? 
+               GROUP BY group_id, user_id 
+               ORDER BY count DESC 
+               LIMIT 1''',
+            (current_date,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row if row else None
 
-                        await send_group_msg(group_id, "开始 /eqbottest 测试...")
 
-                        # 从存储的数据中选择两个不同的数据源进行测试
-                        test_sources = list(received_earthquake_data.keys())
+async def get_top_users_monthly():
+    """获取本月调用最多的用户"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    current_month = datetime.now().strftime('%Y-%m')
+    
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            '''SELECT group_id, user_id, COUNT(*) as count 
+               FROM weather_api_usage 
+               WHERE month = ? 
+               GROUP BY group_id, user_id 
+               ORDER BY count DESC 
+               LIMIT 1''',
+            (current_month,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row if row else None
 
-                        if len(test_sources) >= 2:
-                            # 选择前两个可用的数据源进行测试
-                            source1 = test_sources[0]
-                            source2 = test_sources[1]
 
-                            # 构建测试消息1
-                            test1 = {
-                                "type": "update",
-                                "source": source1,
-                                "Data": received_earthquake_data[source1]
-                            }
-                            await process_message(json.dumps(test1), config, target_group=group_id, apply_rules=False)
+async def get_top_groups_daily():
+    """获取今日调用最多的群组"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    current_date = datetime.now().strftime('%Y-%m-%d')
+    
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            '''SELECT group_id, COUNT(*) as count 
+               FROM weather_api_usage 
+               WHERE date = ? 
+               GROUP BY group_id 
+               ORDER BY count DESC 
+               LIMIT 1''',
+            (current_date,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row if row else None
 
-                            # 构建测试消息2
-                            test2 = {
-                                "type": "update",
-                                "source": source2,
-                                "Data": received_earthquake_data[source2]
-                            }
-                            await process_message(json.dumps(test2), config, target_group=group_id, apply_rules=False)
-                        elif len(test_sources) == 1:
-                            # 如果只有一个数据源，则使用该数据源两次
-                            source1 = test_sources[0]
 
-                            # 构建测试消息1
-                            test1 = {
-                                "type": "update",
-                                "source": source1,
-                                "Data": received_earthquake_data[source1]
-                            }
-                            await process_message(json.dumps(test1), config, target_group=group_id, apply_rules=False)
-
-                            # 构建测试消息2（使用相同的数据源，但添加测试标识）
-                            test2_data = received_earthquake_data[source1].copy()
-                            test2_data['placeName'] = test2_data.get('placeName', '未知地点') + " (测试)"
-
-                            test2 = {
-                                "type": "update",
-                                "source": source1,
-                                "Data": test2_data
-                            }
-                            await process_message(json.dumps(test2), config, target_group=group_id, apply_rules=False)
-                        else:
-                            # 如果没有存储的数据，则使用硬编码的测试数据
-                            # 测试1 cenc - 中国内部地震
-                            test1 = {
-                                "type": "update",
-                                "source": "cenc",
-                                "Data": {
-                                    "id": "test_cenc_001",
-                                    "shockTime": "2026-02-02 03:00:00",
-                                    "latitude": 31.0,
-                                    "longitude": 103.4,
-                                    "depth": 10,
-                                    "magnitude": 5.5,
-                                    "placeName": "四川汶川县",
-                                    "infoTypeName": "正式测定"
-                                }
-                            }
-                            await process_message(json.dumps(test1), config, target_group=group_id, apply_rules=False)
-
-                            # 测试2 usgs - 外国M5.0以上地震
-                            test2 = {
-                                "type": "update",
-                                "source": "usgs",
-                                "Data": {
-                                    "id": "test_usgs_001",
-                                    "shockTime": "2026-02-02 04:59:59",
-                                    "placeName": "Near coast of Ecuador",
-                                    "magnitude": 6.2,
-                                    "latitude": -0.719,
-                                    "longitude": -80.236,
-                                    "depth": 10,
-                                    "title": "M 6.2 - Near coast of Ecuador"
-                                }
-                            }
-                            await process_message(json.dumps(test2), config, target_group=group_id, apply_rules=False)
-
-                        await send_group_msg(group_id, "测试完成！请检查消息和图片。")
-
-    except websockets.exceptions.ConnectionClosedOK:
-        logging.info("NapCat WS 正常关闭")
-    except Exception as e:
-        logging.error(f"NapCat WS 处理异常: {e}")
-"""
-Bydbot - WebSocket处理器
-处理FAN WebSocket连接和消息处理
-"""
+async def get_top_groups_monthly():
+    """获取本月调用最多的群组"""
+    from datetime import datetime
+    db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+    current_month = datetime.now().strftime('%Y-%m')
+    
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            '''SELECT group_id, COUNT(*) as count 
+               FROM weather_api_usage 
+               WHERE month = ? 
+               GROUP BY group_id 
+               ORDER BY count DESC 
+               LIMIT 1''',
+            (current_month,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row if row else None

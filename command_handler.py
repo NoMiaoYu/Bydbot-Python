@@ -110,7 +110,11 @@ def get_weather_command_help(command_name: str) -> str:
 
         "空气质量每日预报": "空气质量每日预报 latitude longitude [localTime] [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- localTime: 是否返回本地时间（可选）\n- lang: 多语言设置（可选）\n示例: 空气质量每日预报 39.9042 116.4074",
 
-        "空气质量小时预报": "空气质量小时预报 latitude longitude [localTime] [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- localTime: 是否返回本地时间（可选）\n- lang: 多语言设置（可选）\n示例: 空气质量小时预报 39.9042 116.4074"
+        "空气质量小时预报": "空气质量小时预报 latitude longitude [localTime] [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- localTime: 是否返回本地时间（可选）\n- lang: 多语言设置（可选）\n示例: 空气质量小时预报 39.9042 116.4074",
+
+        "天气统计": "天气统计\n查看今日和本月的API调用统计信息\n示例: 天气统计",
+
+        "天气开关": "天气开关 [开启|关闭]\n控制天气API的开关状态（仅主人可用）\n- 开启: 启用天气API\n- 关闭: 禁用天气API（仅主人可使用）\n示例: 天气开关 开启\n示例: 天气开关 关闭"
     }
 
     return help_info.get(command_name, f"未知命令: {command_name}")
@@ -136,7 +140,8 @@ def is_weather_command(raw_message: str) -> tuple[bool, str, list]:
     supported_commands = [
         "城市搜索", "热门城市查询", "POI搜索", "实时天气", "每日天气预报", "逐小时天气预报",
         "格点实时天气", "格点每日天气预报", "格点逐小时天气预报", "分钟级降水", "实时天气预警",
-        "天气指数预报", "实时空气质量", "空气质量每日预报", "空气质量小时预报", "天气统计", "天气开关"
+        "天气指数预报", "实时空气质量", "空气质量每日预报", "空气质量小时预报",
+        "天气统计", "天气开关"
     ]
 
     if command_name in supported_commands:
@@ -145,56 +150,14 @@ def is_weather_command(raw_message: str) -> tuple[bool, str, list]:
     return False, "", []
 
 
-async def handle_weather_stats(group_id: str, config: Dict[str, Any]) -> None:
-    """
-    处理天气统计命令
-    :param group_id: 群ID
-    :param config: 配置
-    """
-    # 获取天气API配置
-    qweather_config = config.get('qweather', {})
-    
-    # 检查是否启用了天气功能
-    if not WEATHER_API_AVAILABLE:
-        await send_group_msg(group_id, "天气功能未启用，请检查配置")
-        return
-    
-    # 显示当前天气API配置信息
-    stats_info = [
-        "【天气功能统计】",
-        f"API主机: {qweather_config.get('api_host', 'N/A')}",
-        f"缓存状态: {'启用' if qweather_config.get('cache_enabled', True) else '禁用'}",
-        f"缓存TTL: {qweather_config.get('cache_ttl', 600)}秒",
-        "支持的命令: 城市搜索, 实时天气, 天气预报等"
-    ]
-    
-    await send_group_msg(group_id, "\n".join(stats_info))
+async def check_weather_api_limit(config: Dict[str, Any]) -> bool:
+    """检查是否达到API调用限制"""
+    from ws_handler import get_daily_usage_count
 
+    daily_limit = config.get("weather_api_daily_limit", 1500)
+    current_usage = await get_daily_usage_count()
 
-async def handle_weather_toggle(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
-    """
-    处理天气开关命令
-    :param args: 参数列表
-    :param group_id: 群ID
-    :param user_id: 用户ID
-    :param config: 配置
-    """
-    # 检查是否提供了参数
-    if not args:
-        await send_group_msg(group_id, "天气开关命令格式: 天气开关 [开启|关闭]")
-        return
-    
-    action = args[0].strip()
-    
-    if action in ["开启", "打开", "启动"]:
-        # 在实际应用中，这里可以实现动态启用/禁用天气功能的逻辑
-        # 例如，可以将设置保存到配置文件或数据库中
-        await send_group_msg(group_id, "天气功能已开启")
-    elif action in ["关闭", "停止"]:
-        # 在实际应用中，这里可以实现动态启用/禁用天气功能的逻辑
-        await send_group_msg(group_id, "天气功能已关闭")
-    else:
-        await send_group_msg(group_id, "天气开关命令格式: 天气开关 [开启|关闭]")
+    return current_usage < daily_limit
 
 
 async def handle_weather_command(command_name: str, args: list, group_id: str, config: Dict[str, Any], user_id: str = None) -> None:
@@ -216,9 +179,36 @@ async def handle_weather_command(command_name: str, args: list, group_id: str, c
         await send_group_msg(group_id, f"【{command_name} 帮助】\n{help_text}")
         return
 
+    # 处理特殊命令：天气统计
+    if command_name == "天气统计":
+        await handle_weather_stats(group_id, config)
+        return
+
+    # 处理特殊命令：天气开关
+    if command_name == "天气开关":
+        await handle_weather_toggle(args, group_id, user_id, config)
+        return
+
+    # 检查天气API是否启用
+    if not config.get("weather_api_enabled", True):
+        owner_id = config.get("owner_id", "")
+        if not owner_id or user_id != owner_id:
+            await send_group_msg(group_id, "天气API调用已关闭，仅主人可使用")
+            return
+
+    # 检查API调用限制
+    if not await check_weather_api_limit(config):
+        await send_group_msg(group_id, f"今日天气API调用已达上限（{config.get('weather_api_daily_limit', 1500)}次），请明天再试")
+        return
+
     api = QWeatherAPI(config)
 
     try:
+        # 记录API调用
+        if user_id:
+            from ws_handler import record_weather_api_usage
+            await record_weather_api_usage(group_id, user_id, command_name, command_name)
+        
         if command_name == "城市搜索":
             # 城市搜索 location [adm] [range] [number] [lang]
             location = args[0] if len(args) > 0 else "北京"
@@ -466,6 +456,86 @@ async def handle_weather_command(command_name: str, args: list, group_id: str, c
         await send_group_msg(group_id, f"天气命令处理出错: {str(e)}")
 
 
+async def handle_weather_stats(group_id: str, config: Dict[str, Any]) -> None:
+    """处理天气统计命令"""
+    try:
+        from ws_handler import (
+            get_daily_usage_count, get_monthly_usage_count,
+            get_top_users_daily, get_top_users_monthly,
+            get_top_groups_daily, get_top_groups_monthly
+        )
+        
+        daily_count = await get_daily_usage_count()
+        monthly_count = await get_monthly_usage_count()
+        
+        top_user_daily = await get_top_users_daily()
+        top_user_monthly = await get_top_users_monthly()
+        top_group_daily = await get_top_groups_daily()
+        top_group_monthly = await get_top_groups_monthly()
+        
+        stats_msg = "【天气API使用统计】\n"
+        stats_msg += f"今日调用次数: {daily_count}/{config.get('weather_api_daily_limit', 1500)}\n"
+        stats_msg += f"本月调用次数: {monthly_count}\n\n"
+        
+        if top_user_daily:
+            stats_msg += f"今日调用最多: 群{top_user_daily[0]} 用户{top_user_daily[1]} ({top_user_daily[2]}次)\n"
+        else:
+            stats_msg += "今日调用最多: 无数据\n"
+            
+        if top_user_monthly:
+            stats_msg += f"本月调用最多: 群{top_user_monthly[0]} 用户{top_user_monthly[1]} ({top_user_monthly[2]}次)\n"
+        else:
+            stats_msg += "本月调用最多: 无数据\n"
+            
+        if top_group_daily:
+            stats_msg += f"今日群组最多: 群{top_group_daily[0]} ({top_group_daily[1]}次)\n"
+        else:
+            stats_msg += "今日群组最多: 无数据\n"
+            
+        if top_group_monthly:
+            stats_msg += f"本月群组最多: 群{top_group_monthly[0]} ({top_group_monthly[1]}次)\n"
+        else:
+            stats_msg += "本月群组最多: 无数据\n"
+        
+        await send_group_msg(group_id, stats_msg)
+        
+    except Exception as e:
+        logging.error(f"获取天气统计失败: {e}")
+        await send_group_msg(group_id, "获取天气统计信息失败")
+
+
+async def handle_weather_toggle(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
+    """处理天气开关命令"""
+    owner_id = config.get("owner_id", "")
+    
+    if not owner_id or user_id != owner_id:
+        await send_group_msg(group_id, "只有主人才能控制天气API开关")
+        return
+    
+    if not args:
+        current_status = "开启" if config.get("weather_api_enabled", True) else "关闭"
+        await send_group_msg(group_id, f"当前天气API状态: {current_status}\n使用 '天气开关 开启' 或 '天气开关 关闭' 来切换")
+        return
+    
+    action = args[0].lower()
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+    
+    if action in ["开启", "开", "enable", "on"]:
+        config["weather_api_enabled"] = True
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        await send_group_msg(group_id, "天气API已开启")
+        
+    elif action in ["关闭", "关", "disable", "off"]:
+        config["weather_api_enabled"] = False
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        await send_group_msg(group_id, "天气API已关闭（仅主人可使用）")
+        
+    else:
+        await send_group_msg(group_id, "无效操作，请使用 '开启' 或 '关闭'")
+
+
 async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
     """
     处理命令（包括测试命令和天气命令）
@@ -516,9 +586,10 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
             logging.debug(f"群 {group_id} 不在配置的群组列表中，忽略命令")
             return
 
-        logging.info(f"收到天气命令 {raw_message} 来自群 {group_id}")
         # 获取用户ID用于统计
         user_id = str(event.get("user_id", ""))
+
+        logging.info(f"收到天气命令 {raw_message} 来自群 {group_id} 用户 {user_id}")
         await handle_weather_command(command_name, args, group_id, config, user_id)
     else:
         logging.debug(f"不是有效的天气命令: {raw_message}")
