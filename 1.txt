@@ -1,0 +1,191 @@
+【城市搜索】
+城市搜索 location [adm] [range] [number] [lang]
+- location: 城市名称、经纬度、LocationID或Adcode（必选）
+  - 经纬度格式：经度,纬度（经度在前纬度在后，英文逗号分隔，十进制格式，北纬东经为正，南纬西经为负）
+  - 例如：location=116.41,39.92
+- adm: 上级行政区划，用于排除重名城市（可选）
+  - adm1：一级行政区划（省/州/府/构成国，包括直辖市/首都/特区等）
+  - adm2：次级行政区划（具体城市或地区的直属行政区划）
+- range: 搜索范围，ISO 3166国家代码（可选）
+  - 采用二位字母代码（alpha-2），如CN、US、JP等
+- number: 返回结果数量(1-20，默认10)（可选）
+- lang: 多语言设置（可选）
+  - 支持30+种主流语言，如zh-hans、en、ja、ko等
+示例: 城市搜索 北京
+示例: 城市搜索 116.4074,39.9042 CN 10 zh-hans
+
+【热门城市查询】
+热门城市查询 [range] [number] [lang]
+- range: 国家代码，ISO 3166二位字母代码（可选）
+- number: 返回结果数量(1-20，默认10)（可选）
+- lang: 多语言设置（可选）
+示例: 热门城市查询
+示例: 热门城市查询 CN 15 zh-hans
+
+【POI搜索】
+POI搜索 location type [city] [number] [lang]
+- location: POI名称、关键词或经纬度（必选）
+  - POI包括：机场、港口、火车站、中国空气质量监测站和中国景点
+- type: POI类型（必选）
+  - scenic：景点
+  - TSTA：潮汐站点
+  - city：城市
+  - 其他POI类型请参考和风天气文档
+- city: POI所在城市（可选）
+- number: 返回结果数量(1-20，默认10)（可选）
+- lang: 多语言设置（可选）
+示例: POI搜索 故宫 scenic
+示例: POI搜索 长城 scenic 北京 5 zh-hans
+
+【实时天气】
+实时天气 location [lang] [unit]
+- location: LocationID、经纬度坐标或城市名称（必选）
+  - LocationID是城市、地区或POI点的唯一标识
+  - 经纬度格式：经度,纬度
+- lang: 多语言设置（可选，默认zh-hans）
+  - 默认语言为所在国家或地区的官方语言
+  - 回退顺序：指定语言 > 官方语言 > 英语
+- unit: 单位系统（可选，默认m）
+  - m：公制单位（公里、摄氏度等）
+  - i：英制单位（英里、华氏度等）
+示例: 实时天气 101010100
+示例: 实时天气 116.4074,39.9042 zh-hans m
+
+【每日天气预报】
+每日天气预报 days location [lang] [unit]
+- days: 预报天数（必选）
+  - 支持：3d、7d、10d、15d、30d
+- location: LocationID或经纬度坐标（必选）
+- lang: 多语言设置（可选）
+- unit: 单位系统（可选）
+示例: 每日天气预报 7d 101010100
+示例: 每日天气预报 3d 116.4074,39.9042 zh-hans m
+
+【逐小时天气预报】
+逐小时天气预报 hours location [lang] [unit]
+- hours: 预报小时数（必选）
+  - 支持：24h、72h、168h
+- location: LocationID或经纬度坐标（必选）
+- lang: 多语言设置（可选）
+- unit: 单位系统（可选）
+示例: 逐小时天气预报 24h 101010100
+
+【格点实时天气】
+格点实时天气 latitude longitude [lang] [unit]
+- latitude: 纬度（必选）
+  - 中国大陆地区应使用GCJ-02坐标系
+  - 其他地区应使用WGS-84坐标系
+- longitude: 经度（必选）
+- lang: 多语言设置（可选）
+- unit: 单位系统（可选）
+示例: 格点实时天气 39.9042 116.4074
+
+【格点每日天气预报】
+格点每日天气预报 days latitude longitude [lang] [unit]
+- days: 预报天数（必选）
+  - 支持：3d、7d
+- latitude: 纬度（必选）
+- longitude: 经度（必选）
+- lang: 多语言设置（可选）
+- unit: 单位系统（可选）
+示例: 格点每日天气预报 3d 39.9042 116.4074
+
+【格点逐小时天气预报】
+格点逐小时天气预报 hours latitude longitude [lang] [unit]
+- hours: 预报小时数（必选）
+  - 支持：24h、72h、168h
+- latitude: 纬度（必选）
+- longitude: 经度（必选）
+- lang: 多语言设置（可选）
+- unit: 单位系统（可选）
+示例: 格点逐小时天气预报 24h 39.9042 116.4074
+
+【分钟级降水】
+分钟级降水 location [lang]
+- location: 经纬度坐标（必选）
+  - 格式：经度,纬度
+- lang: 多语言设置（可选）
+  - 注意：分钟级降水仅支持中文(zh-hans)和英文(en)
+示例: 分钟级降水 116.4074,39.9042
+
+【实时天气预警】
+实时天气预警 latitude longitude [localTime] [lang]
+- latitude: 纬度（必选）
+- longitude: 经度（必选）
+- localTime: 是否返回本地时间（可选）
+  - true：返回本地时间
+  - false：返回UTC时间
+  - 默认：false
+- lang: 多语言设置（可选）
+示例: 实时天气预警 39.9042 116.4074
+示例: 实时天气预警 31.2304 121.4737 true zh-hans
+
+【天气指数预报】
+天气指数预报 days location type [lang]
+- days: 预报天数（必选）
+  - 支持：1d、3d
+- location: LocationID或经纬度坐标（必选）
+- type: 指数类型ID（可选，默认0表示所有）
+  - 0：全部天气指数
+  - 1：运动指数
+  - 2：洗车指数  
+  - 3：穿衣指数
+  - 4：钓鱼指数
+  - 5：紫外线指数
+  - 6：旅游指数
+  - 7：花粉过敏指数
+  - 8：舒适度指数
+  - 9：感冒指数
+  - 10：空气污染扩散条件指数
+  - 11：空调开启指数
+  - 12：太阳镜指数
+  - 13：化妆指数
+  - 14：晾晒指数
+  - 15：交通指数
+  - 16：防晒指数
+- lang: 多语言设置（可选）
+  - 注意：天气指数仅支持中文(zh-hans)和英文(en)
+示例: 天气指数预报 1d 101010100 0 zh-hans
+
+【实时空气质量】
+实时空气质量 latitude longitude [lang]
+- latitude: 纬度（必选）
+- longitude: 经度（必选）
+- lang: 多语言设置（可选）
+  - 支持的国家/地区：中国、美国、亚洲和欧洲大部分国家
+  - 中国地区支持cn-mee和cn-mee-1h两种AQI标准
+示例: 实时空气质量 39.9042 116.4074
+
+【空气质量每日预报】
+空气质量每日预报 latitude longitude [localTime] [lang]
+- latitude: 纬度（必选）
+- longitude: 经度（必选）
+- localTime: 是否返回本地时间（可选）
+  - true：返回本地时间
+  - false：返回UTC时间
+  - 默认：false
+- lang: 多语言设置（可选）
+示例: 空气质量每日预报 39.9042 116.4074
+
+【空气质量小时预报】
+空气质量小时预报 latitude longitude [localTime] [lang]
+- latitude: 纬度（必选）
+- longitude: 经度（必选）
+- localTime: 是否返回本地时间（可选）
+  - true：返回本地时间
+  - false：返回UTC时间
+  - 默认：false
+- lang: 多语言设置（可选）
+示例: 空气质量小时预报 39.9042 116.4074
+
+【天气统计】
+天气统计
+查看今日和本月的API调用统计信息
+- 显示今日调用次数/限制（1500次）
+- 显示本月总调用次数
+- 显示今日调用最多的用户（群ID+用户ID+次数）
+- 显示本月调用最多的用户（群ID+用户ID+次数）
+- 显示今日调用最多的群组（群ID+次数）
+- 显示本月调用最多的群组（群ID+次数）
+示例: 天气统计
+

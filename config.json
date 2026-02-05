@@ -170,7 +170,7 @@
   },
 
   "qweather": {
-    "api_host": "your_api_host",
+    "api_host": "m659fc4xja.re.qweatherapi.com",
     "api_key": "166d9dc9998b4dce951b83e4acf51624",
     "jwt_token": "",
     "use_jwt": false,
