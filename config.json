@@ -2,10 +2,10 @@
   "napcat_http_url": "http://127.0.0.1:3000",
   "napcat_token": "cm@C>|e8nnmUI_xu",
   "ws_port": 9998,
-  "log_file": "eqbot.log",
+  "log_file": "bydbot.log",
   "enable_command_listener": true,
-  "test_command": "/eqbottest",
-  "test_groups_only": true,
+  "test_command": "/bydbottest",
+  "test_groups_only": false,
 
   "groups": {
     "1071528933": {
@@ -23,7 +23,7 @@
   },
 
   "sources": {
-  "weatheralarm": false,
+    "weatheralarm": true,
     "tsunami": true,
     "cenc": true,
     "cea": true,
@@ -146,7 +146,7 @@
 
     "cwa-eew": "[CWA\\台湾气象署 地震预警]\n第 {updates} 报\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估最大震度: {maxIntensity}",
 
-    "jma": "[JMA\\日本气象厅 · {infoTypeName}]\n|{final}\\{cancel}\n| 第 {updates} 报\n| 发生时间(JST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 最大震度: {epiIntensity}",
+    "jma": "[JMA\\日本气象厅 · {infoTypeName}]\n第 {updates} 报\n| 发生时间(JST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 最大震度: {epiIntensity}\n| 状态: {final}\\{cancel}",
 
     "hko": "[HKO\\香港天文台 地震信息]\n| 发生时间(HKT): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 位置描述: {citystring}\n| 区域: {region}\n| 数据核验: {verify}",
 
@@ -167,7 +167,82 @@
     "kma-eew": "[KMA\\韩国气象厅 地震预警]\n| 发生时间(KST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 预估最大烈度: {epiIntensity}\n| 受影响地区: {affectedAreas}",
 
     "fssn": "[FSSN 地震速报]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 发表时间: {createTime}\n| 区划: {placeName_zh}\n| 速报类型: {infoTypeName}"
-    },
+  },
+
+  "qweather": {
+    "api_host": "your_api_host",
+    "api_key": "166d9dc9998b4dce951b83e4acf51624",
+    "jwt_token": "",
+    "use_jwt": false,
+    "cache_enabled": true,
+    "cache_ttl": 600
+  },
+
+  "weather_commands": {
+    "城市搜索": "/geo/v2/city/lookup",
+    "热门城市查询": "/geo/v2/city/top",
+    "POI搜索": "/geo/v2/poi/lookup",
+    "实时天气": "/v7/weather/now",
+    "每日天气预报": "/v7/weather/{days}",
+    "逐小时天气预报": "/v7/weather/{hours}",
+    "格点实时天气": "/v7/grid-weather/now",
+    "格点每日天气预报": "/v7/grid-weather/{days}",
+    "格点逐小时天气预报": "/v7/grid-weather/{hours}",
+    "分钟级降水": "/v7/minutely/5m",
+    "实时天气预警": "/weatheralert/v1/current/{latitude}/{longitude}",
+    "天气指数预报": "/v7/indices/{days}",
+    "实时空气质量": "/airquality/v1/current/{latitude}/{longitude}",
+    "空气质量每日预报": "/airquality/v1/daily/{latitude}/{longitude}",
+    "空气质量小时预报": "/airquality/v1/hourly/{latitude}/{longitude}",
+    "财务汇总": "/finance/v1/summary",
+    "请求量统计": "/metrics/v1/stats"
+  },
+
+  "weather_templates": {
+    "城市搜索": "[城市搜索结果]\n地点: {name}\n国家: {country}\n省份: {adm1}\n城市: {adm2}\nLocationID: {id}\n经度: {lon}\n纬度: {lat}",
+    
+    "热门城市查询": "[热门城市]\n{city_list}",
+    
+    "POI搜索": "[POI搜索结果]\n名称: {name}\n类型: {type}\n地址: {address}\n经度: {lon}\n纬度: {lat}\nLocationID: {id}",
+    
+    "实时天气": "[实时天气]\n地点: {location}\n温度: {temp}°C\n体感温度: {feelsLike}°C\n天气状况: {text}\n湿度: {humidity}%\n风向: {windDir}\n风力等级: {windScale}级\n风速: {windSpeed}km/h\n能见度: {vis}km\n气压: {pressure}hPa\n云量: {cloud}%\n更新时间: {obsTime}",
+    
+    "每日天气预报_3d": "[3天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
+    "每日天气预报_7d": "[7天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
+    "每日天气预报_10d": "[10天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
+    "每日天气预报_15d": "[15天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
+    "每日天气预报_30d": "[30天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
+    
+    "逐小时天气预报_24h": "[24小时逐小时预报] {location}\n{hourly_forecast}\n数据更新: {updateTime}",
+    "逐小时天气预报_72h": "[72小时逐小时预报] {location}\n{hourly_forecast}\n数据更新: {updateTime}",
+    "逐小时天气预报_168h": "[168小时逐小时预报] {location}\n{hourly_forecast}\n数据更新: {updateTime}",
+    
+    "格点实时天气": "[格点实时天气]\n经度: {lon}\n纬度: {lat}\n温度: {temp}°C\n体感温度: {feelsLike}°C\n天气: {text}\n湿度: {humidity}%\n风向: {windDir}\n风力: {windScale}级\n能见度: {vis}km\n更新时间: {obsTime}",
+    
+    "格点每日天气预报_3d": "[格点3天预报]\n经度: {lon}\n纬度: {lat}\n{grid_daily_forecast}\n更新时间: {updateTime}",
+    "格点每日天气预报_7d": "[格点7天预报]\n经度: {lon}\n纬度: {lat}\n{grid_daily_forecast}\n更新时间: {updateTime}",
+    
+    "格点逐小时天气预报_24h": "[格点24小时预报]\n经度: {lon}\n纬度: {lat}\n{grid_hourly_forecast}\n更新时间: {updateTime}",
+    "格点逐小时天气预报_72h": "[格点72小时预报]\n经度: {lon}\n纬度: {lat}\n{grid_hourly_forecast}\n更新时间: {updateTime}",
+    "格点逐小时天气预报_168h": "[格点168小时预报]\n经度: {lon}\n纬度: {lat}\n{grid_hourly_forecast}\n更新时间: {updateTime}",
+    
+    "分钟级降水": "[分钟级降水预报]\n地点: {location}\n{minutely_data}\n更新时间: {updateTime}",
+    
+    "实时天气预警": "[天气预警]\n预警标题: {headline}\n预警类型: {eventType}\n预警等级: {severity}\n生效时间: {effectiveTime}\n结束时间: {expireTime}\n预警描述: {description}\n防御指南: {instruction}\n发布单位: {sender}",
+    
+    "天气指数预报_1d": "[1天天气指数] {location}\n{indices_data}\n更新时间: {updateTime}",
+    "天气指数预报_3d": "[3天天气指数] {location}\n{indices_data}\n更新时间: {updateTime}",
+    
+    "实时空气质量": "[实时空气质量]\n地点: {location}\nAQI指数: {aqi}\n空气质量等级: {category}\n首要污染物: {primaryPollutant}\nPM2.5: {pm2p5}μg/m³\nPM10: {pm10}μg/m³\nSO2: {so2}μg/m³\nNO2: {no2}μg/m³\nCO: {co}mg/m³\nO3: {o3}μg/m³\n更新时间: {pubTime}",
+    
+    "空气质量每日预报": "[空气质量日预报]\n地点: {location}\n{air_daily_forecast}\n更新时间: {updateTime}",
+    
+    "空气质量小时预报": "[空气质量小时预报]\n地点: {location}\n{air_hourly_forecast}\n更新时间: {updateTime}",
+    
+    "财务汇总": "[财务汇总]\n总请求量: {totalRequests}\n免费额度: {freeQuota}\n超额请求: {overQuota}\n账单状态: {billingStatus}\n下次计费: {nextBillingDate}",
+    
+    "请求量统计": "[请求量统计]\n项目: {project}\n凭据: {credential}\n总请求: {totalRequests}\n今日请求: {todayRequests}\n本月请求: {monthRequests}\n最后更新: {lastUpdateTime}"
+  },
 
   "draw_sources": ["fssn", "usgs", "jma", "cwa", "cenc", "cea", "cea-pr"],
 
@@ -176,35 +251,6 @@
   "draw_timeout": 20,
 
   "field_rules": {
-    "usgs": {
-      "infoTypeName": [
-        {
-          "condition": "value == 'automatic'",
-          "true_value": "自动测定",
-          "false_value": "{value}"
-        },
-        {
-          "condition": "value == 'reviewed'",
-          "true_value": "正式测定",
-          "false_value": "{value}"
-        }
-      ]
-    },
-    "jma": {
-      "final": [
-        {
-          "condition": "value == True or str(value).lower() == 'true'",
-          "true_value": "最终报",
-          "false_value": ""
-        }
-      ],
-      "cancel": [
-        {
-          "condition": "value == True or str(value).lower() == 'true'",
-          "true_value": "取消",
-          "false_value": ""
-        }
-      ]
-    }
+    
   }
 }

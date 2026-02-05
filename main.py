@@ -1,5 +1,5 @@
 """
-EQBot - 地震信息推送机器人
+Bydbot - 多功能信息推送机器人
 主程序入口
 """
 
@@ -92,9 +92,9 @@ async def main():
         return
 
     # 设置日志
-    log_file = config.get('log_file', 'eqbot.log')
+    log_file = config.get('log_file', 'bydbot.log')
     setup_logging(log_file)
-    logging.info("地震推送机器人启动")
+    logging.info("Bydbot启动")
 
     # 初始化数据库
     db_path = await init_db()
