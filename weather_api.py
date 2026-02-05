@@ -82,9 +82,18 @@ class QWeatherAPI:
             params["adm"] = adm
         if range:
             params["range"] = range
-        
+
         async with aiohttp.ClientSession() as session:
             return await self._make_request(session, "/geo/v2/city/lookup", params)
+
+    async def poi_lookup(self, location: str, type_param: str = "scenic", city: str = None, number: int = 10, lang: str = "zh") -> Optional[Dict[str, Any]]:
+        """POI搜索"""
+        params = {"location": location, "type": type_param, "number": number, "lang": lang}
+        if city:
+            params["city"] = city
+
+        async with aiohttp.ClientSession() as session:
+            return await self._make_request(session, "/geo/v2/poi/lookup", params)
     
     async def geo_top(self, range: str = None, number: int = 10, lang: str = "zh") -> Optional[Dict[str, Any]]:
         """热门城市查询"""

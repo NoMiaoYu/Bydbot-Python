@@ -5,3 +5,5 @@ cartopy
 numpy
 Pillow
 aiosqlite
+requests
+beautifulsoup4

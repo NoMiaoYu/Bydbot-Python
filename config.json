@@ -9,7 +9,7 @@
 
   "owner_id": "180456825",
 
- 
+
   "weather_api_enabled": true,
   "weather_api_daily_limit": 1500,
 
@@ -29,7 +29,7 @@
   },
 
   "sources": {
-    "weatheralarm": true,
+    "weatheralarm": false,
     "tsunami": true,
     "cenc": true,
     "cea": true,
@@ -166,7 +166,7 @@
 
     "gfz": "[GFZ\\德国地学研究中心 地震信息]\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}",
 
-    "usp": "[USP\\巴西圣保罗大学 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 位置: {placeName}\n| 经纬度: {longitude} {latitude}",
+    "usp": "[USP\\巴西圣保罗大学 地震信息]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}",
 
     "kma": "[KMA\\韩国气象厅 地震信息]\n| 发生时间(KST): {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 地震烈度: {epiIntensity}",
 
@@ -206,47 +206,47 @@
 
   "weather_templates": {
     "城市搜索": "[城市搜索结果]\n地点: {name}\n国家: {country}\n省份: {adm1}\n城市: {adm2}\nLocationID: {id}\n经度: {lon}\n纬度: {lat}",
-    
+
     "热门城市查询": "[热门城市]\n{city_list}",
-    
+
     "POI搜索": "[POI搜索结果]\n名称: {name}\n类型: {type}\n地址: {address}\n经度: {lon}\n纬度: {lat}\nLocationID: {id}",
-    
+
     "实时天气": "[实时天气]\n地点: {location}\n温度: {temp}°C\n体感温度: {feelsLike}°C\n天气状况: {text}\n湿度: {humidity}%\n风向: {windDir}\n风力等级: {windScale}级\n风速: {windSpeed}km/h\n能见度: {vis}km\n气压: {pressure}hPa\n云量: {cloud}%\n更新时间: {obsTime}",
-    
+
     "每日天气预报_3d": "[3天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
     "每日天气预报_7d": "[7天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
     "每日天气预报_10d": "[10天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
     "每日天气预报_15d": "[15天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
     "每日天气预报_30d": "[30天天气预报] {location}\n{daily_forecast}\n数据更新: {updateTime}",
-    
+
     "逐小时天气预报_24h": "[24小时逐小时预报] {location}\n{hourly_forecast}\n数据更新: {updateTime}",
     "逐小时天气预报_72h": "[72小时逐小时预报] {location}\n{hourly_forecast}\n数据更新: {updateTime}",
     "逐小时天气预报_168h": "[168小时逐小时预报] {location}\n{hourly_forecast}\n数据更新: {updateTime}",
-    
+
     "格点实时天气": "[格点实时天气]\n经度: {lon}\n纬度: {lat}\n温度: {temp}°C\n体感温度: {feelsLike}°C\n天气: {text}\n湿度: {humidity}%\n风向: {windDir}\n风力: {windScale}级\n能见度: {vis}km\n更新时间: {obsTime}",
-    
+
     "格点每日天气预报_3d": "[格点3天预报]\n经度: {lon}\n纬度: {lat}\n{grid_daily_forecast}\n更新时间: {updateTime}",
     "格点每日天气预报_7d": "[格点7天预报]\n经度: {lon}\n纬度: {lat}\n{grid_daily_forecast}\n更新时间: {updateTime}",
-    
+
     "格点逐小时天气预报_24h": "[格点24小时预报]\n经度: {lon}\n纬度: {lat}\n{grid_hourly_forecast}\n更新时间: {updateTime}",
     "格点逐小时天气预报_72h": "[格点72小时预报]\n经度: {lon}\n纬度: {lat}\n{grid_hourly_forecast}\n更新时间: {updateTime}",
     "格点逐小时天气预报_168h": "[格点168小时预报]\n经度: {lon}\n纬度: {lat}\n{grid_hourly_forecast}\n更新时间: {updateTime}",
-    
+
     "分钟级降水": "[分钟级降水预报]\n地点: {location}\n{minutely_data}\n更新时间: {updateTime}",
-    
+
     "实时天气预警": "[天气预警]\n预警标题: {headline}\n预警类型: {eventType}\n预警等级: {severity}\n生效时间: {effectiveTime}\n结束时间: {expireTime}\n预警描述: {description}\n防御指南: {instruction}\n发布单位: {sender}",
-    
+
     "天气指数预报_1d": "[1天天气指数] {location}\n{indices_data}\n更新时间: {updateTime}",
     "天气指数预报_3d": "[3天天气指数] {location}\n{indices_data}\n更新时间: {updateTime}",
-    
+
     "实时空气质量": "[实时空气质量]\n地点: {location}\nAQI指数: {aqi}\n空气质量等级: {category}\n首要污染物: {primaryPollutant}\nPM2.5: {pm2p5}μg/m³\nPM10: {pm10}μg/m³\nSO2: {so2}μg/m³\nNO2: {no2}μg/m³\nCO: {co}mg/m³\nO3: {o3}μg/m³\n更新时间: {pubTime}",
-    
+
     "空气质量每日预报": "[空气质量日预报]\n地点: {location}\n{air_daily_forecast}\n更新时间: {updateTime}",
-    
+
     "空气质量小时预报": "[空气质量小时预报]\n地点: {location}\n{air_hourly_forecast}\n更新时间: {updateTime}",
-    
+
     "财务汇总": "[财务汇总]\n总请求量: {totalRequests}\n免费额度: {freeQuota}\n超额请求: {overQuota}\n账单状态: {billingStatus}\n下次计费: {nextBillingDate}",
-    
+
     "请求量统计": "[请求量统计]\n项目: {project}\n凭据: {credential}\n总请求: {totalRequests}\n今日请求: {todayRequests}\n本月请求: {monthRequests}\n最后更新: {lastUpdateTime}"
   },
 
@@ -257,6 +257,6 @@
   "draw_timeout": 20,
 
   "field_rules": {
-    
+
   }
 }

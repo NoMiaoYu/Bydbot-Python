@@ -1,10 +1,11 @@
 import base64
 import aiohttp
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 
-SESSION = None
-HEADERS = {}
+# 全局变量
+SESSION: Optional[aiohttp.ClientSession] = None
+HEADERS: Dict[str, str] = {}
 
 
 """
@@ -13,14 +14,22 @@ Bydbot - 消息发送器
 """
 
 
-def init_sender(url: str, token: str) -> None:
+async def init_sender(url: str, token: str) -> None:
     """
     初始化消息发送器
     :param url: NapCat HTTP API服务地址
     :param token: NapCat访问令牌（可选）
     """
     global SESSION, HEADERS
-    SESSION = aiohttp.ClientSession(base_url=url)
+    
+    # 关闭现有的会话（如果存在）
+    if SESSION:
+        await SESSION.close()
+    
+    # 创建新的会话
+    SESSION = aiohttp.ClientSession(base_url=url, timeout=aiohttp.ClientTimeout(total=30))
+    HEADERS.clear()  # 清空旧的头部信息
+    
     if token:
         HEADERS['Authorization'] = f'Bearer {token}'
 
@@ -42,19 +51,22 @@ async def send_group_msg(group_id: str, text: str) -> bool:
             "group_id": int(group_id),
             "message": text
         }
+        
         async with SESSION.post('/send_group_msg', json=payload, headers=HEADERS) as resp:
             response_text = await resp.text()
+            
             if resp.status == 200:
-                logging.info(f"发送文本到群 {group_id}: {text}")
+                logging.info(f"发送文本到群 {group_id}: {text[:50]}...")  # 只记录前50个字符
                 return True
             else:
                 logging.error(f"发送失败，状态码 {resp.status}: {response_text}")
                 return False
-    except aiohttp.ClientError as e:
-        logging.error(f"HTTP客户端错误: {e}")
-        return False
+                
     except ValueError as e:
         logging.error(f"群号格式错误: {e}")
+        return False
+    except aiohttp.ClientError as e:
+        logging.error(f"HTTP客户端错误: {e}")
         return False
     except Exception as e:
         logging.error(f"发送文本消息时发生未知错误: {e}")
@@ -78,7 +90,7 @@ async def send_group_img(group_id: str, file_path: str) -> bool:
         with open(file_path, 'rb') as f:
             img_data = f.read()
             b64 = base64.b64encode(img_data).decode('utf-8')
-        
+
         payload = {
             "group_id": int(group_id),
             "message": [{
@@ -88,26 +100,28 @@ async def send_group_img(group_id: str, file_path: str) -> bool:
                 }
             }]
         }
-        
+
         async with SESSION.post('/send_group_msg', json=payload, headers=HEADERS) as resp:
             response_text = await resp.text()
+            
             if resp.status == 200:
-                logging.info(f"发送 base64 图片到群 {group_id} 成功")
+                logging.info(f"发送 base64 图片到群 {group_id} 成功: {file_path}")
                 return True
             else:
                 logging.error(f"发送 base64 图片失败，状态码 {resp.status}: {response_text}")
                 return False
+                
     except FileNotFoundError:
         logging.error(f"图片文件不存在: {file_path}")
         return False
     except PermissionError:
         logging.error(f"没有权限访问图片文件: {file_path}")
         return False
-    except aiohttp.ClientError as e:
-        logging.error(f"HTTP客户端错误: {e}")
-        return False
     except ValueError as e:
         logging.error(f"群号格式错误: {e}")
+        return False
+    except aiohttp.ClientError as e:
+        logging.error(f"HTTP客户端错误: {e}")
         return False
     except Exception as e:
         logging.error(f"发送图片消息时发生未知错误: {e}")
@@ -119,3 +133,4 @@ async def close_sender() -> None:
     global SESSION
     if SESSION:
         await SESSION.close()
+        SESSION = None  # 重置为None以便后续初始化

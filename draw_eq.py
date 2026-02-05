@@ -9,6 +9,7 @@ from matplotlib.patches import FancyBboxPatch
 import tempfile
 import numpy as np
 import os
+from typing import Dict, Any, Optional, Tuple
 
 
 # 全局配置
@@ -17,13 +18,13 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.ioff()
 
 
-async def draw_earthquake_async(data, source=None):
+async def draw_earthquake_async(data: Dict[str, Any], source: Optional[str] = None) -> Optional[str]:
     """异步绘制地震地图"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, draw_earthquake, data, source)
 
 
-def draw_earthquake(data, source=None):
+def draw_earthquake(data: Dict[str, Any], source: Optional[str] = None) -> Optional[str]:
     """绘制地震地图的主要函数"""
     try:
         # 提取地震数据
@@ -54,6 +55,14 @@ def draw_earthquake(data, source=None):
         logging.info(f"地震地图绘制成功：{final_image_path}")
         return final_image_path
 
+    except KeyError as e:
+        logging.error(f"绘图失败：缺少必要的数据字段 {e}")
+        plt.close('all')
+        return None
+    except ValueError as e:
+        logging.error(f"绘图失败：数据格式错误 {e}")
+        plt.close('all')
+        return None
     except Exception as e:
         logging.error(f"绘图失败：{str(e)}", exc_info=True)
         plt.close('all')

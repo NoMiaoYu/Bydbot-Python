@@ -6,6 +6,7 @@ import websockets
 import aiosqlite
 import os
 from datetime import datetime, timedelta
+from typing import Dict, Set, Optional, Tuple, Any
 from message_sender import send_group_msg, send_group_img
 from draw_eq import draw_earthquake_async
 
@@ -13,19 +14,19 @@ from draw_eq import draw_earthquake_async
 HEARTBEAT_COUNT = 0
 
 # 存储接收到的地震数据，用于测试命令
-received_earthquake_data = {}
+received_earthquake_data: Dict[str, Any] = {}
 
 # 存储FAN提供的initial数据，用于测试命令
-initial_earthquake_data = []
+initial_earthquake_data: list = []
 
 # 用于存储已处理的地震消息ID集合
-processed_ids = set()
+processed_ids: Set[str] = set()
 
 # 用于存储待处理的绘图任务（源ID -> 任务信息）
-pending_draw_tasks = {}
+pending_draw_tasks: Dict[str, Dict[str, Any]] = {}
 
 # 用于缓存已绘制的图片路径（消息ID -> 图片路径）
-cached_image_paths = {}
+cached_image_paths: Dict[str, str] = {}
 
 
 async def init_db():
@@ -54,27 +55,54 @@ async def init_db():
             )
         ''')
 
-        # 创建API使用统计表
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS weather_api_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,          -- YYYY-MM-DD
-                month TEXT NOT NULL,         -- YYYY-MM
-                group_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                command TEXT NOT NULL,
-                api_endpoint TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+        # 检查并更新API使用统计表结构
+        # 首先检查表是否存在
+        table_exists = await db.execute('''
+            SELECT name FROM sqlite_master WHERE type='table' AND name='weather_api_usage'
         ''')
+        table_exists = await table_exists.fetchone()
 
-        # 创建索引以提高查询性能
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_shock_time ON earthquakes(shock_time)')
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON earthquakes(created_at)')
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_date ON weather_api_usage(date)')
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_month ON weather_api_usage(month)')
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_group ON weather_api_usage(group_id)')
-        await db.execute('CREATE INDEX IF NOT EXISTS idx_weather_user ON weather_api_usage(user_id)')
+        if table_exists:
+            # 检查是否已有api_endpoint列
+            columns_info = await db.execute('PRAGMA table_info(weather_api_usage)')
+            columns = await columns_info.fetchall()
+            column_names = [col[1] for col in columns]
+            
+            if 'api_endpoint' not in column_names:
+                # 添加api_endpoint列
+                await db.execute('ALTER TABLE weather_api_usage ADD COLUMN api_endpoint TEXT NOT NULL DEFAULT ""')
+                logging.info("已更新weather_api_usage表结构，添加api_endpoint列")
+        else:
+            # 创建API使用统计表
+            await db.execute('''
+                CREATE TABLE weather_api_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,          -- YYYY-MM-DD
+                    month TEXT NOT NULL,         -- YYYY-MM
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    command TEXT NOT NULL,
+                    api_endpoint TEXT NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+        # 创建索引以提高查询性能（仅在不存在时创建）
+        indexes_to_create = [
+            ('idx_shock_time', 'CREATE INDEX IF NOT EXISTS idx_shock_time ON earthquakes(shock_time)'),
+            ('idx_created_at', 'CREATE INDEX IF NOT EXISTS idx_created_at ON earthquakes(created_at)'),
+            ('idx_weather_date', 'CREATE INDEX IF NOT EXISTS idx_weather_date ON weather_api_usage(date)'),
+            ('idx_weather_month', 'CREATE INDEX IF NOT EXISTS idx_weather_month ON weather_api_usage(month)'),
+            ('idx_weather_group', 'CREATE INDEX IF NOT EXISTS idx_weather_group ON weather_api_usage(group_id)'),
+            ('idx_weather_user', 'CREATE INDEX IF NOT EXISTS idx_weather_user ON weather_api_usage(user_id)')
+        ]
+        
+        for index_name, create_sql in indexes_to_create:
+            try:
+                await db.execute(create_sql)
+            except aiosqlite.OperationalError:
+                # 如果索引已存在则忽略错误
+                pass
 
         await db.commit()
 
@@ -101,7 +129,7 @@ async def load_recent_ids_from_db():
     return ids
 
 
-async def is_duplicate_message(event_data, source):
+async def is_duplicate_message(event_data: Dict[str, Any], source: str) -> bool:
     """异步检查消息是否重复"""
     # 尝试获取地震消息的唯一ID
     eq_id = event_data.get('id')
@@ -112,7 +140,7 @@ async def is_duplicate_message(event_data, source):
 
     # 创建源+ID的组合键
     composite_id = f"{source}_{eq_id}"
-    
+
     logging.debug(f"检查消息是否重复，复合ID: {composite_id}")
 
     # 检查ID是否已经在内存中
@@ -124,8 +152,8 @@ async def is_duplicate_message(event_data, source):
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     async with aiosqlite.connect(db_path) as db:
         async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE source = ? AND id = ?", (source, eq_id)) as cursor:
-            count = await cursor.fetchone()
-            count = count[0] if count else 0
+            result = await cursor.fetchone()
+            count = result[0] if result else 0
 
     if count > 0:
         logging.info(f"发现重复消息（数据库中），复合ID: {composite_id}")
@@ -139,17 +167,17 @@ async def is_duplicate_message(event_data, source):
     return False
 
 
-async def is_recent_duplicate_by_time(event_data, source, time_window_minutes=5):
+async def is_recent_duplicate_by_time(event_data: Dict[str, Any], source: str, time_window_minutes: int = 5) -> bool:
     """基于时间窗口检查是否为近期重复消息（防止相同事件的不同报告）"""
     # 排除非地震源
     non_earthquake_sources = {'weatheralarm', 'tsunami'}
     if source in non_earthquake_sources:
         return False
-        
+
     shock_time_str = event_data.get('shockTime')
     if not shock_time_str:
         return False
-    
+
     try:
         # 解析震发时间
         shock_time = datetime.strptime(shock_time_str, '%Y-%m-%d %H:%M:%S')
@@ -160,45 +188,45 @@ async def is_recent_duplicate_by_time(event_data, source, time_window_minutes=5)
         except ValueError:
             logging.warning(f"无法解析震发时间: {shock_time_str}")
             return False
-    
+
     # 获取经纬度和震级
     latitude = event_data.get('latitude')
-    longitude = event_data.get('longitude') 
+    longitude = event_data.get('longitude')
     magnitude = event_data.get('magnitude')
-    
+
     if latitude is None or longitude is None or magnitude is None:
         return False
-    
+
     # 计算时间窗口
     current_time = datetime.now()
     time_threshold = current_time - timedelta(minutes=time_window_minutes)
-    
+
     # 如果震发时间太旧（超过24小时），不进行时间窗口去重
     if shock_time < current_time - timedelta(hours=24):
         return False
-    
+
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     async with aiosqlite.connect(db_path) as db:
         # 查询在时间窗口内、位置相近、震级相近的地震事件
         query = """
-            SELECT id, shock_time, latitude, longitude, magnitude 
-            FROM earthquakes 
+            SELECT id, shock_time, latitude, longitude, magnitude
+            FROM earthquakes
             WHERE source = ?
-            AND created_at >= ? 
-            AND ABS(latitude - ?) <= 0.5 
-            AND ABS(longitude - ?) <= 0.5 
+            AND created_at >= ?
+            AND ABS(latitude - ?) <= 0.5
+            AND ABS(longitude - ?) <= 0.5
             AND ABS(magnitude - ?) <= 0.3
         """
-        
+
         async with db.execute(query, (
             source,
             time_threshold.strftime('%Y-%m-%d %H:%M:%S'),
             float(latitude),
-            float(longitude), 
+            float(longitude),
             float(magnitude)
         )) as cursor:
             rows = await cursor.fetchall()
-            
+
         if rows:
             # 找到相似的近期事件
             for row in rows:
@@ -207,17 +235,17 @@ async def is_recent_duplicate_by_time(event_data, source, time_window_minutes=5)
                     existing_shock_time = datetime.strptime(existing_shock_time_str, '%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     continue
-                
+
                 # 如果震发时间相差很小（比如小于1分钟），认为是同一个事件
                 time_diff = abs((shock_time - existing_shock_time).total_seconds())
                 if time_diff < 60:  # 60秒内
                     logging.info(f"发现时间窗口内的重复地震事件: 原ID={row[0]}, 新事件时间={shock_time_str}, 位置=({latitude}, {longitude}), 震级={magnitude}")
                     return True
-    
+
     return False
 
 
-async def save_earthquake_to_db(event_data, source):
+async def save_earthquake_to_db(event_data: Dict[str, Any], source: str) -> None:
     """异步将地震数据保存到数据库"""
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
 
@@ -229,8 +257,8 @@ async def save_earthquake_to_db(event_data, source):
     async with aiosqlite.connect(db_path) as db:
         # 检查是否已存在
         async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE id = ?", (eq_id,)) as cursor:
-            count = await cursor.fetchone()
-            count = count[0] if count else 0
+            result = await cursor.fetchone()
+            count = result[0] if result else 0
 
         if count > 0:
             logging.debug(f"数据库中已存在地震数据，ID: {eq_id}，跳过插入")
@@ -378,26 +406,26 @@ def apply_field_rules(event_data, source, config):
     """
     field_rules = config.get('field_rules', {})
     source_rules = field_rules.get(source, {})
-    
+
     if not source_rules:
         return event_data.copy()
-    
+
     # 创建事件数据的副本以避免修改原始数据
     processed_data = event_data.copy()
-    
+
     for field_name, rules in source_rules.items():
         if field_name not in processed_data:
             continue
-            
+
         field_value = processed_data[field_name]
-        
+
         # 应用所有规则（按顺序）
         for rule in rules:
             try:
                 condition = rule.get('condition', '')
                 true_value = rule.get('true_value', '{value}')
                 false_value = rule.get('false_value', '{value}')
-                
+
                 # 准备条件评估的上下文
                 context = {
                     'value': field_value,
@@ -408,7 +436,7 @@ def apply_field_rules(event_data, source, config):
                     'in': lambda x, y: x in y,
                     'not_in': lambda x, y: x not in y
                 }
-                
+
                 # 安全地评估条件
                 if evaluate_condition(condition, field_value, context):
                     # 使用true_value替换
@@ -417,11 +445,11 @@ def apply_field_rules(event_data, source, config):
                 else:
                     # 使用false_value替换，但继续检查后续规则
                     processed_data[field_name] = false_value.format(value=field_value)
-                    
+
             except Exception as e:
                 logging.warning(f"应用字段规则时出错 (source={source}, field={field_name}): {e}")
                 continue
-    
+
     return processed_data
 
 
@@ -435,11 +463,11 @@ def evaluate_condition(condition, value, context):
     """
     if not condition:
         return False
-        
+
     try:
         # 替换value为实际值的字符串表示
         safe_condition = condition.replace('value', 'context["value"]')
-        
+
         # 限制可用的内置函数和操作符
         allowed_names = {
             "__builtins__": {},
@@ -456,7 +484,7 @@ def evaluate_condition(condition, value, context):
             "False": False,
             "None": None
         }
-        
+
         result = eval(safe_condition, allowed_names)
         return bool(result)
     except Exception as e:
@@ -497,14 +525,14 @@ async def process_earthquake_message(event_data, source, config, target_group=No
 
     for group_id in groups_to_push:
         group_config = config['groups'].get(group_id, {})
-        
+
         # 检查推送规则
         if not should_push_to_group(group_id, source, group_config):
             continue
 
         # 发送文本消息
         await send_earthquake_message(group_id, event_data, source, config)
-        
+
         # 绘制并发送图片
         await send_earthquake_image(group_id, event_data, source, config)
 
@@ -518,7 +546,7 @@ async def send_earthquake_message(group_id, event_data, source, config):
     try:
         # 应用字段规则
         processed_event_data = apply_field_rules(event_data, source, config)
-        
+
         placeholders = re.findall(r'\{([^{}]+)\}', template)
         formatted = {ph: get_nested_value(processed_event_data, ph) for ph in placeholders}
 
@@ -557,10 +585,10 @@ async def send_earthquake_image(group_id, event_data, source, config):
         await download_and_send_cwa_image(group_id, image_url, event_data, config)
     else:
         # 非cwa数据源或没有imageURI字段，使用本地绘图
-        
+
         # 获取消息ID用于缓存
         msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
-        
+
         # 检查是否已有缓存的图片
         if msg_id in cached_image_paths:
             img_path = cached_image_paths[msg_id]
@@ -572,10 +600,10 @@ async def send_earthquake_image(group_id, event_data, source, config):
                 # 缓存的文件不存在，移除缓存
                 del cached_image_paths[msg_id]
                 logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
-        
+
         # 应用字段规则（但保留原始数值用于绘图）
         processed_event_data = apply_field_rules(event_data, source, config)
-        
+
         # 使用规范化后的经纬度数据
         normalized_event_data = processed_event_data.copy()
         formatted_coords = format_coordinates(processed_event_data)
@@ -583,7 +611,7 @@ async def send_earthquake_image(group_id, event_data, source, config):
             normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
         if 'latitude_normalized' in formatted_coords:
             normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
-        
+
         # 添加数据源信息用于断层绘制判断
         normalized_event_data['_source'] = source
 
@@ -631,10 +659,10 @@ async def send_local_earthquake_image(group_id, event_data, config):
     """发送本地绘制的地震图像"""
     # 获取数据源（从event_data中提取，如果有的话）
     source = event_data.get('_source', 'unknown')
-    
+
     # 获取消息ID用于缓存
     msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
-    
+
     # 检查是否已有缓存的图片
     if msg_id in cached_image_paths:
         img_path = cached_image_paths[msg_id]
@@ -646,7 +674,7 @@ async def send_local_earthquake_image(group_id, event_data, config):
             # 缓存的文件不存在，移除缓存
             del cached_image_paths[msg_id]
             logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
-    
+
     # 使用规范化后的经纬度数据
     normalized_event_data = event_data.copy()
     formatted_coords = format_coordinates(event_data)
@@ -654,7 +682,7 @@ async def send_local_earthquake_image(group_id, event_data, config):
         normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
     if 'latitude_normalized' in formatted_coords:
         normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
-    
+
     normalized_event_data['_source'] = source
 
     img_path = await asyncio.wait_for(
@@ -686,7 +714,7 @@ async def handle_initial_data(data, config):
     for item in initial_data:
         source = item.get('source')
         event_data = item.get('Data', {})
-        
+
         # 将初始数据的ID加入去重集合
         eq_id = event_data.get('id')
         if not eq_id:
@@ -694,7 +722,7 @@ async def handle_initial_data(data, config):
         if eq_id:
             processed_ids.add(eq_id)
             logging.debug(f"将初始数据ID加入去重集合: {eq_id}")
-        
+
         # 只存储有绘图功能的数据源
         if source in config['draw_sources']:
             initial_earthquake_data.append(item)
@@ -736,21 +764,21 @@ def has_significant_update(old_data, new_data):
     """检查新数据是否有任何更新（只要有字段不同就视为更新）"""
     if not old_data:
         return True
-    
+
     # 比较所有字段，只要有任何不同就视为更新
     for key in set(list(old_data.keys()) + list(new_data.keys())):
         old_value = old_data.get(key)
         new_value = new_data.get(key)
-        
+
         # 如果一个存在另一个不存在，视为更新
         if (old_value is None) != (new_value is None):
             return True
-            
+
         # 如果都存在但值不同，视为更新
         if old_value is not None and new_value is not None:
             if str(old_value) != str(new_value):
                 return True
-    
+
     return False
 
 
@@ -773,14 +801,14 @@ async def delayed_draw_and_send(event_data, source, config, target_group=None):
     try:
         # 等待15秒，如果期间没有收到更新，则进行绘图
         await asyncio.sleep(15)
-        
+
         # 检查是否仍然需要绘图（可能在等待期间被取消）
         source_id = f"{source}_{event_data.get('id', event_data.get('shockTime', ''))}"
         if source_id not in pending_draw_tasks:
             return
-            
+
         logging.info(f"15秒内未收到更新，开始绘图: {source_id}")
-        
+
         # 推送目标
         if target_group:
             groups_to_push = [target_group]
@@ -791,7 +819,7 @@ async def delayed_draw_and_send(event_data, source, config, target_group=None):
 
         for group_id in groups_to_push:
             group_config = config['groups'].get(group_id, {})
-            
+
             # 检查推送规则
             if not should_push_to_group(group_id, source, group_config):
                 continue
@@ -802,7 +830,7 @@ async def delayed_draw_and_send(event_data, source, config, target_group=None):
             except Exception as e:
                 logging.error(f"向群 {group_id} 发送地震图片失败: {e}")
                 continue
-            
+
     except asyncio.CancelledError:
         logging.debug(f"绘图任务被取消: {source}")
     except Exception as e:
@@ -815,12 +843,12 @@ async def is_within_time_window(event_data, source, max_hours=1):
     non_earthquake_sources = {'weatheralarm', 'tsunami'}
     if source in non_earthquake_sources:
         return True
-        
+
     shock_time_str = event_data.get('shockTime')
     if not shock_time_str:
         logging.warning("消息缺少震发时间，跳过处理")
         return False
-    
+
     try:
         # 解析震发时间
         shock_time = datetime.strptime(shock_time_str, '%Y-%m-%d %H:%M:%S')
@@ -831,11 +859,11 @@ async def is_within_time_window(event_data, source, max_hours=1):
         except ValueError:
             logging.warning(f"无法解析震发时间: {shock_time_str}，跳过处理")
             return False
-    
+
     # 计算当前时间和时间差
     current_time = datetime.now()
     time_diff = current_time - shock_time
-    
+
     # 检查是否在时间窗口内（1小时内）
     if time_diff.total_seconds() <= max_hours * 3600 and time_diff.total_seconds() >= 0:
         return True
@@ -886,7 +914,7 @@ async def process_message(message, config, target_group=None, apply_rules=True):
     # 检查是否为重复消息但有数据更新
     is_duplicate = False
     has_update = False
-    
+
     # 检查内存中的重复
     if composite_id in processed_ids:
         is_duplicate = True
@@ -905,7 +933,7 @@ async def process_message(message, config, target_group=None, apply_rules=True):
             async with db.execute("SELECT COUNT(*) FROM earthquakes WHERE source = ? AND id = ?", (source, eq_id)) as cursor:
                 count = await cursor.fetchone()
                 count = count[0] if count else 0
-        
+
         if count > 0:
             is_duplicate = True
             stored_data = await get_stored_earthquake_data(eq_id, source)
@@ -917,12 +945,12 @@ async def process_message(message, config, target_group=None, apply_rules=True):
                 # 将ID加入内存集合避免后续重复检查
                 processed_ids.add(composite_id)
                 return None
-    
+
     # 如果不是重复消息或有更新，则继续处理
     if not is_duplicate or has_update:
         # 将ID加入内存集合
         processed_ids.add(composite_id)
-        
+
         # 一收到消息就进行时间校验（仅处理1小时内发生的地震）
         if not await is_within_time_window(event_data, source, max_hours=1):
             logging.info(f"地震事件超出1小时时间窗口，跳过处理: {event_data.get('id', 'unknown')}")
@@ -948,7 +976,7 @@ async def process_message(message, config, target_group=None, apply_rules=True):
             # 取消之前的待处理绘图任务（如果有）
             source_id = f"{source}_{eq_id}"
             await cancel_pending_draw_task(source_id)
-            
+
             # 创建新的延迟绘图任务
             draw_task = asyncio.create_task(
                 delayed_draw_and_send(event_data, source, config, target_group)
@@ -978,7 +1006,7 @@ async def process_text_message_only(event_data, source, config, target_group=Non
 
     for group_id in groups_to_push:
         group_config = config['groups'].get(group_id, {})
-        
+
         # 检查推送规则
         if not should_push_to_group(group_id, source, group_config):
             continue
@@ -1012,13 +1040,13 @@ async def record_weather_api_usage(group_id: str, user_id: str, command: str, ap
     """记录天气API调用"""
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
-    
+
     current_date = datetime.now().strftime('%Y-%m-%d')
     current_month = datetime.now().strftime('%Y-%m')
-    
+
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            '''INSERT INTO weather_api_usage (date, month, group_id, user_id, command, api_endpoint) 
+            '''INSERT INTO weather_api_usage (date, month, group_id, user_id, command, api_endpoint)
                VALUES (?, ?, ?, ?, ?, ?)''',
             (current_date, current_month, group_id, user_id, command, api_endpoint)
         )
@@ -1030,10 +1058,10 @@ async def get_daily_usage_count():
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_date = datetime.now().strftime('%Y-%m-%d')
-    
+
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            'SELECT COUNT(*) FROM weather_api_usage WHERE date = ?', 
+            'SELECT COUNT(*) FROM weather_api_usage WHERE date = ?',
             (current_date,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -1045,10 +1073,10 @@ async def get_monthly_usage_count():
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_month = datetime.now().strftime('%Y-%m')
-    
+
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            'SELECT COUNT(*) FROM weather_api_usage WHERE month = ?', 
+            'SELECT COUNT(*) FROM weather_api_usage WHERE month = ?',
             (current_month,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -1060,14 +1088,14 @@ async def get_top_users_daily():
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_date = datetime.now().strftime('%Y-%m-%d')
-    
+
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            '''SELECT group_id, user_id, COUNT(*) as count 
-               FROM weather_api_usage 
-               WHERE date = ? 
-               GROUP BY group_id, user_id 
-               ORDER BY count DESC 
+            '''SELECT group_id, user_id, COUNT(*) as count
+               FROM weather_api_usage
+               WHERE date = ?
+               GROUP BY group_id, user_id
+               ORDER BY count DESC
                LIMIT 1''',
             (current_date,)
         ) as cursor:
@@ -1080,14 +1108,14 @@ async def get_top_users_monthly():
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_month = datetime.now().strftime('%Y-%m')
-    
+
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            '''SELECT group_id, user_id, COUNT(*) as count 
-               FROM weather_api_usage 
-               WHERE month = ? 
-               GROUP BY group_id, user_id 
-               ORDER BY count DESC 
+            '''SELECT group_id, user_id, COUNT(*) as count
+               FROM weather_api_usage
+               WHERE month = ?
+               GROUP BY group_id, user_id
+               ORDER BY count DESC
                LIMIT 1''',
             (current_month,)
         ) as cursor:
@@ -1100,14 +1128,14 @@ async def get_top_groups_daily():
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_date = datetime.now().strftime('%Y-%m-%d')
-    
+
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            '''SELECT group_id, COUNT(*) as count 
-               FROM weather_api_usage 
-               WHERE date = ? 
-               GROUP BY group_id 
-               ORDER BY count DESC 
+            '''SELECT group_id, COUNT(*) as count
+               FROM weather_api_usage
+               WHERE date = ?
+               GROUP BY group_id
+               ORDER BY count DESC
                LIMIT 1''',
             (current_date,)
         ) as cursor:
@@ -1120,16 +1148,32 @@ async def get_top_groups_monthly():
     from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_month = datetime.now().strftime('%Y-%m')
-    
+
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
-            '''SELECT group_id, COUNT(*) as count 
-               FROM weather_api_usage 
-               WHERE month = ? 
-               GROUP BY group_id 
-               ORDER BY count DESC 
+            '''SELECT group_id, COUNT(*) as count
+               FROM weather_api_usage
+               WHERE month = ?
+               GROUP BY group_id
+               ORDER BY count DESC
                LIMIT 1''',
             (current_month,)
         ) as cursor:
             row = await cursor.fetchone()
             return row if row else None
+
+
+async def cleanup_processed_ids():
+    """定期清理已处理ID集合，防止内存无限增长"""
+    global processed_ids
+    
+    # 计算两周前的时间
+    two_weeks_ago = datetime.now() - timedelta(weeks=2)
+    
+    # 从数据库加载最近两周的ID
+    recent_ids = await load_recent_ids_from_db()
+    
+    # 更新内存中的ID集合
+    processed_ids = recent_ids.copy()
+    
+    logging.info(f"已清理已处理ID集合，保留最近两周的 {len(processed_ids)} 个ID")
