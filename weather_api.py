@@ -200,91 +200,238 @@ class QWeatherAPI:
             return await self._make_request(session, f"/airquality/v1/hourly/{latitude}/{longitude}", params)
 
 def format_weather_response(template_name: str, data: Dict[str, Any], config: Dict[str, Any]) -> str:
-    """格式化天气响应消息"""
-    templates = config.get('weather_templates', {})
-    template = templates.get(template_name, "")
-    
-    if not template:
-        return f"天气信息模板 '{template_name}' 未找到，请检查配置"
-    
+    """格式化天气API响应数据"""
     try:
-        # 城市搜索
+        # 获取天气模板配置
+        weather_templates = config.get('weather_templates', {})
+        template = weather_templates.get(template_name, "{data}")
+        
+        # 根据模板名称进行不同的格式化处理
         if template_name == "城市搜索":
-            locations = data.get('location', [])
-            if not locations:
+            location_data = data.get('location', [])
+            if not location_data:
                 return "未找到匹配的城市"
             
-            location = locations[0]
-            return template.format(
-                name=location.get('name', 'N/A'),
-                country=location.get('country', 'N/A'),
-                adm1=location.get('adm1', 'N/A'),
-                adm2=location.get('adm2', 'N/A'),
-                id=location.get('id', 'N/A'),
-                lon=location.get('lon', 'N/A'),
-                lat=location.get('lat', 'N/A')
-            )
+            locations = []
+            for loc in location_data[:10]:  # 最多显示10个结果
+                # 坐标系统处理
+                lon = loc.get('lon', 'N/A')
+                lat = loc.get('lat', 'N/A')
+                
+                # 行政区划处理
+                country = loc.get('country', 'N/A')
+                adm1 = loc.get('adm1', 'N/A')  # 一级行政区划
+                adm2 = loc.get('adm2', 'N/A')  # 次级行政区划
+                
+                # LocationID处理
+                loc_id = loc.get('id', 'N/A')
+                
+                # Rank值处理（如果存在）
+                rank = loc.get('rank', 'N/A')
+                
+                locations.append(template.format(
+                    name=loc.get('name', 'N/A'),
+                    country=country,
+                    adm1=adm1,
+                    adm2=adm2,
+                    id=loc_id,
+                    lon=lon,
+                    lat=lat,
+                    rank=rank
+                ))
+            
+            return "\n\n".join(locations)
         
-        # 热门城市查询
         elif template_name == "热门城市查询":
-            cities = data.get('top', [])
-            if not cities:
-                return "获取热门城市失败"
+            location_data = data.get('location', [])
+            if not location_data:
+                return "未找到热门城市"
             
-            city_list = []
-            for city in cities[:20]:
-                name = city.get('name', 'N/A')
-                country = city.get('country', 'N/A')
-                city_list.append(f"{name} ({country})")
+            cities = []
+            for loc in location_data[:10]:
+                city_info = f"地点: {loc.get('name', 'N/A')}\n国家: {loc.get('country', 'N/A')}\nLocationID: {loc.get('id', 'N/A')}\n经度: {loc.get('lon', 'N/A')}\n纬度: {loc.get('lat', 'N/A')}"
+                cities.append(city_info)
             
-            return template.format(city_list="\n".join(city_list))
+            city_list = "\n---\n".join(cities)
+            return template.format(city_list=city_list)
         
-        # POI搜索
         elif template_name == "POI搜索":
-            pois = data.get('poi', [])
-            if not pois:
+            poi_data = data.get('poi', [])
+            if not poi_data:
                 return "未找到匹配的POI"
             
-            poi = pois[0]
-            return template.format(
-                name=poi.get('name', 'N/A'),
-                type=poi.get('type', 'N/A'),
-                address=poi.get('address', 'N/A'),
-                lon=poi.get('lon', 'N/A'),
-                lat=poi.get('lat', 'N/A'),
-                id=poi.get('id', 'N/A')
-            )
+            pois = []
+            for poi in poi_data[:10]:
+                # POI类型映射
+                poi_type = poi.get('type', 'N/A')
+                type_mapping = {
+                    'scenic': '景点',
+                    'TSTA': '潮汐站点', 
+                    'city': '城市',
+                    'airport': '机场',
+                    'port': '港口',
+                    'railway': '火车站',
+                    'aqi': '空气质量监测站'
+                }
+                display_type = type_mapping.get(poi_type, poi_type)
+                
+                pois.append(template.format(
+                    name=poi.get('name', 'N/A'),
+                    type=display_type,
+                    address=poi.get('address', 'N/A'),
+                    lon=poi.get('lon', 'N/A'),
+                    lat=poi.get('lat', 'N/A'),
+                    id=poi.get('id', 'N/A')
+                ))
+            
+            return "\n\n".join(pois)
         
-        # 实时天气
         elif template_name == "实时天气":
             now_data = data.get('now', {})
-            location_data = data.get('location', [{}])[0] if data.get('location') else {}
-            location_name = location_data.get('name', '未知地点')
+            location_data = data.get('location', {})
+            
+            # 多语言处理
+            text = now_data.get('text', 'N/A')
+            wind_dir = now_data.get('windDir', 'N/A')
+            
+            # 风向方位映射（支持8位和16位）
+            wind_direction_map = {
+                'N': '北风', 'NE': '东北风', 'E': '东风', 'SE': '东南风',
+                'S': '南风', 'SW': '西南风', 'W': '西风', 'NW': '西北风',
+                'NNE': '东北偏北风', 'ENE': '东北偏东风', 'ESE': '东南偏东风',
+                'SSE': '东南偏南风', 'SSW': '西南偏南风', 'WSW': '西南偏西风',
+                'WNW': '西北偏西风', 'NNW': '西北偏北风',
+                'Rotational': '旋转风', 'None': '无持续风向'
+            }
+            display_wind_dir = wind_direction_map.get(wind_dir, wind_dir)
+            
+            # 风力等级处理
+            wind_scale = now_data.get('windScale', 'N/A')
+            if wind_scale == '0':
+                display_wind_dir = '无持续风向'
+            
+            # 单位系统处理
+            temp = now_data.get('temp', 'N/A')
+            feels_like = now_data.get('feelsLike', 'N/A')
+            wind_speed = now_data.get('windSpeed', 'N/A')
+            vis = now_data.get('vis', 'N/A')
+            pressure = now_data.get('pressure', 'N/A')
             
             return template.format(
-                location=location_name,
-                temp=now_data.get('temp', 'N/A'),
-                feelsLike=now_data.get('feelsLike', 'N/A'),
-                text=now_data.get('text', 'N/A'),
+                location=location_data.get('name', 'N/A'),
+                temp=temp,
+                feelsLike=feels_like,
+                text=text,
                 humidity=now_data.get('humidity', 'N/A'),
-                windDir=now_data.get('windDir', 'N/A'),
-                windScale=now_data.get('windScale', 'N/A'),
-                windSpeed=now_data.get('windSpeed', 'N/A'),
-                vis=now_data.get('vis', 'N/A'),
-                pressure=now_data.get('pressure', 'N/A'),
+                windDir=display_wind_dir,
+                windScale=wind_scale,
+                windSpeed=wind_speed,
+                vis=vis,
+                pressure=pressure,
                 cloud=now_data.get('cloud', 'N/A'),
                 obsTime=now_data.get('obsTime', 'N/A')
             )
         
-        # 每日天气预报
         elif template_name.startswith("每日天气预报_"):
-            location_data = data.get('location', [{}])[0] if data.get('location') else {}
-            location_name = location_data.get('name', '未知地点')
+            days = template_name.split('_')[1]
+            daily_data = data.get('daily', [])
+            location_data = data.get('location', {})
+            
+            if not daily_data:
+                return f"{days}天天气预报数据为空"
+            
+            daily_lines = []
+            for day in daily_data:
+                date = day.get('fxDate', 'N/A')
+                temp_max = day.get('tempMax', 'N/A')
+                temp_min = day.get('tempMin', 'N/A')
+                text_day = day.get('textDay', 'N/A')
+                text_night = day.get('textNight', 'N/A')
+                wind_dir_day = day.get('windDirDay', 'N/A')
+                wind_scale_day = day.get('windScaleDay', 'N/A')
+                humidity = day.get('humidity', 'N/A')
+                
+                # 天气图标处理
+                icon_day = day.get('iconDay', 'N/A')
+                icon_night = day.get('iconNight', 'N/A')
+                
+                daily_line = f"{date}: {text_day}转{text_night} {temp_min}°C~{temp_max}°C 风向:{wind_dir_day} 风力:{wind_scale_day}级 湿度:{humidity}%"
+                daily_lines.append(daily_line)
+            
+            daily_forecast = "\n".join(daily_lines)
+            
+            return template.format(
+                location=location_data.get('name', 'N/A'),
+                daily_forecast=daily_forecast,
+                updateTime=data.get('updateTime', 'N/A')
+            )
+        
+        elif template_name.startswith("逐小时天气预报_"):
+            hours = template_name.split('_')[1]
+            hourly_data = data.get('hourly', [])
+            location_data = data.get('location', {})
+            
+            if not hourly_data:
+                return f"{hours}小时逐小时预报数据为空"
+            
+            hourly_lines = []
+            for hour in hourly_data[:24]:
+                time = hour.get('fxTime', '').split('T')[1][:5] if 'T' in hour.get('fxTime', '') else hour.get('fxTime', '')
+                temp = hour.get('temp', 'N/A')
+                text = hour.get('text', 'N/A')
+                wind_dir = hour.get('windDir', 'N/A')
+                wind_scale = hour.get('windScale', 'N/A')
+                humidity = hour.get('humidity', 'N/A')
+                
+                hourly_line = f"{time}: {text} {temp}°C 风向:{wind_dir} 风力:{wind_scale}级 湿度:{humidity}%"
+                hourly_lines.append(hourly_line)
+            
+            hourly_forecast = "\n".join(hourly_lines)
+            
+            return template.format(
+                location=location_data.get('name', 'N/A'),
+                hourly_forecast=hourly_forecast,
+                updateTime=data.get('updateTime', 'N/A')
+            )
+        
+        elif template_name == "格点实时天气":
+            now_data = data.get('now', {})
+            
+            # 坐标系统处理
+            lon = data.get('lon', 'N/A')
+            lat = data.get('lat', 'N/A')
+            
+            # 风向处理
+            wind_dir = now_data.get('windDir', 'N/A')
+            wind_direction_map = {
+                'N': '北风', 'NE': '东北风', 'E': '东风', 'SE': '东南风',
+                'S': '南风', 'SW': '西南风', 'W': '西风', 'NW': '西北风'
+            }
+            display_wind_dir = wind_direction_map.get(wind_dir, wind_dir)
+            
+            return template.format(
+                lon=lon,
+                lat=lat,
+                temp=now_data.get('temp', 'N/A'),
+                feelsLike=now_data.get('feelsLike', 'N/A'),
+                text=now_data.get('text', 'N/A'),
+                humidity=now_data.get('humidity', 'N/A'),
+                windDir=display_wind_dir,
+                windScale=now_data.get('windScale', 'N/A'),
+                vis=now_data.get('vis', 'N/A'),
+                obsTime=now_data.get('obsTime', 'N/A')
+            )
+        
+        elif template_name.startswith("格点每日天气预报_"):
+            days = template_name.split('_')[1]
             daily_data = data.get('daily', [])
             
-            forecast_lines = []
+            if not daily_data:
+                return f"格点{days}天预报数据为空"
+            
+            grid_daily_lines = []
             for day in daily_data:
-                date = day.get('fxDate', '')
+                date = day.get('fxDate', 'N/A')
                 temp_max = day.get('tempMax', 'N/A')
                 temp_min = day.get('tempMin', 'N/A')
                 text_day = day.get('textDay', 'N/A')
@@ -292,178 +439,223 @@ def format_weather_response(template_name: str, data: Dict[str, Any], config: Di
                 wind_dir_day = day.get('windDirDay', 'N/A')
                 wind_scale_day = day.get('windScaleDay', 'N/A')
                 
-                forecast_lines.append(f"{date}: {text_day}/{text_night} {temp_min}°C~{temp_max}°C {wind_dir_day}{wind_scale_day}级")
-            
-            daily_forecast = "\n".join(forecast_lines)
-            
-            return template.format(
-                location=location_name,
-                daily_forecast=daily_forecast,
-                updateTime=data.get('updateTime', 'N/A')
-            )
-        
-        # 逐小时天气预报
-        elif template_name.startswith("逐小时天气预报_"):
-            location_data = data.get('location', [{}])[0] if data.get('location') else {}
-            location_name = location_data.get('name', '未知地点')
-            hourly_data = data.get('hourly', [])
-            
-            hourly_lines = []
-            for hour in hourly_data[:24]:
-                time = hour.get('fxTime', '').split('T')[1][:5] if 'T' in hour.get('fxTime', '') else hour.get('fxTime', '')
-                temp = hour.get('temp', 'N/A')
-                text = hour.get('text', 'N/A')
-                humidity = hour.get('humidity', 'N/A')
-                hourly_lines.append(f"{time}: {text} {temp}°C 湿度{humidity}%")
-            
-            hourly_forecast = "\n".join(hourly_lines)
-            
-            return template.format(
-                location=location_name,
-                hourly_forecast=hourly_forecast,
-                updateTime=data.get('updateTime', 'N/A')
-            )
-        
-        # 格点实时天气
-        elif template_name == "格点实时天气":
-            now_data = data.get('now', {})
-            return template.format(
-                lon=now_data.get('lon', 'N/A'),
-                lat=now_data.get('lat', 'N/A'),
-                temp=now_data.get('temp', 'N/A'),
-                feelsLike=now_data.get('feelsLike', 'N/A'),
-                text=now_data.get('text', 'N/A'),
-                humidity=now_data.get('humidity', 'N/A'),
-                windDir=now_data.get('windDir', 'N/A'),
-                windScale=now_data.get('windScale', 'N/A'),
-                vis=now_data.get('vis', 'N/A'),
-                obsTime=now_data.get('obsTime', 'N/A')
-            )
-        
-        # 格点每日天气预报
-        elif template_name.startswith("格点每日天气预报_"):
-            daily_data = data.get('daily', [])
-            if not daily_data:
-                return "格点预报数据为空"
-            
-            first_day = daily_data[0]
-            grid_daily_lines = []
-            for day in daily_data:
-                date = day.get('fxDate', '')
-                temp_max = day.get('tempMax', 'N/A')
-                temp_min = day.get('tempMin', 'N/A')
-                text_day = day.get('textDay', 'N/A')
-                grid_daily_lines.append(f"{date}: {text_day} {temp_min}°C~{temp_max}°C")
+                grid_line = f"{date}: {text_day}转{text_night} {temp_min}°C~{temp_max}°C 风向:{wind_dir_day} 风力:{wind_scale_day}级"
+                grid_daily_lines.append(grid_line)
             
             grid_daily_forecast = "\n".join(grid_daily_lines)
             
             return template.format(
-                lon=first_day.get('lon', 'N/A'),
-                lat=first_day.get('lat', 'N/A'),
+                lon=data.get('lon', 'N/A'),
+                lat=data.get('lat', 'N/A'),
                 grid_daily_forecast=grid_daily_forecast,
                 updateTime=data.get('updateTime', 'N/A')
             )
         
-        # 格点逐小时天气预报
         elif template_name.startswith("格点逐小时天气预报_"):
+            hours = template_name.split('_')[1]
             hourly_data = data.get('hourly', [])
-            if not hourly_data:
-                return "格点逐小时预报数据为空"
             
-            first_hour = hourly_data[0]
+            if not hourly_data:
+                return f"格点{hours}小时预报数据为空"
+            
             grid_hourly_lines = []
             for hour in hourly_data[:24]:
                 time = hour.get('fxTime', '').split('T')[1][:5] if 'T' in hour.get('fxTime', '') else hour.get('fxTime', '')
                 temp = hour.get('temp', 'N/A')
                 text = hour.get('text', 'N/A')
-                grid_hourly_lines.append(f"{time}: {text} {temp}°C")
+                wind_dir = hour.get('windDir', 'N/A')
+                wind_scale = hour.get('windScale', 'N/A')
+                
+                grid_line = f"{time}: {text} {temp}°C 风向:{wind_dir} 风力:{wind_scale}级"
+                grid_hourly_lines.append(grid_line)
             
             grid_hourly_forecast = "\n".join(grid_hourly_lines)
             
             return template.format(
-                lon=first_hour.get('lon', 'N/A'),
-                lat=first_hour.get('lat', 'N/A'),
+                lon=data.get('lon', 'N/A'),
+                lat=data.get('lat', 'N/A'),
                 grid_hourly_forecast=grid_hourly_forecast,
                 updateTime=data.get('updateTime', 'N/A')
             )
         
-        # 分钟级降水
         elif template_name == "分钟级降水":
-            location_data = data.get('location', {})
-            location_name = location_data.get('name', '未知地点')
             minutely_data = data.get('minutely', [])
+            location_data = data.get('location', {})
             
             if not minutely_data:
-                return "分钟级降水数据为空"
+                return "分钟级降水预报数据为空"
             
-            precipitation_lines = []
-            for i, item in enumerate(minutely_data[:60]):  # 最多显示60分钟
-                time = i + 1
-                precip = item.get('precip', '0')
-                precipitation_lines.append(f"{time}分钟后: {precip}mm")
+            precip_lines = []
+            for precip in minutely_data[:60]:  # 最多60分钟
+                time = precip.get('fxTime', '').split('T')[1][:5] if 'T' in precip.get('fxTime', '') else precip.get('fxTime', '')
+                precip_value = precip.get('precip', 'N/A')
+                precip_lines.append(f"{time}: {precip_value}mm")
             
-            minutely_data_str = "\n".join(precipitation_lines)
+            minutely_data_str = "\n".join(precip_lines)
             
             return template.format(
-                location=location_name,
+                location=location_data.get('name', 'N/A'),
                 minutely_data=minutely_data_str,
                 updateTime=data.get('updateTime', 'N/A')
             )
         
-        # 实时天气预警
         elif template_name == "实时天气预警":
-            alerts = data.get('alerts', [])
-            if not alerts:
+            warning_data = data.get('warning', [])
+            
+            if not warning_data:
                 return "当前无天气预警"
             
-            alert = alerts[0]
+            # 取第一个预警（最新）
+            warning = warning_data[0]
+            
+            # 紧迫程度映射
+            urgency_map = {
+                'immediate': '必须立刻采取行动',
+                'expected': '应尽快采取行动',
+                'future': '应在近期采取行动',
+                'past': '事件已不再发生',
+                'unknown': '紧迫性未知'
+            }
+            
+            # 严重程度映射
+            severity_map = {
+                'unknown': '严重性未知',
+                'minor': '对生命或财产构成的威胁极小',
+                'moderate': '对生命或财产可能构成威胁',
+                'severe': '对生命或财产构成的重大威胁',
+                'extreme': '对生命或财产构成的严重威胁'
+            }
+            
+            # 确定性映射
+            certainty_map = {
+                'observed': '事件已经发生或正在发生',
+                'likely': '发生概率大于约50%',
+                'possible': '有可能发生，但概率较低',
+                'unlikely': '预计不会发生',
+                'unknown': '确定性未知'
+            }
+            
+            # 颜色映射
+            color_map = {
+                'white': '白色',
+                'gray': '灰色',
+                'green': '绿色',
+                'blue': '蓝色',
+                'yellow': '黄色',
+                'amber': '琥珀色',
+                'orange': '橙色',
+                'red': '红色',
+                'purple': '紫色',
+                'black': '黑色'
+            }
+            
             return template.format(
-                headline=alert.get('headline', 'N/A'),
-                eventType=alert.get('eventType', 'N/A'),
-                severity=alert.get('severity', 'N/A'),
-                effectiveTime=alert.get('effectiveTime', 'N/A'),
-                expireTime=alert.get('expireTime', 'N/A'),
-                description=alert.get('description', 'N/A'),
-                instruction=alert.get('instruction', 'N/A'),
-                sender=alert.get('sender', 'N/A')
+                headline=warning.get('headline', 'N/A'),
+                eventType=warning.get('eventType', 'N/A'),
+                severity=severity_map.get(warning.get('severity', 'unknown'), warning.get('severity', 'N/A')),
+                effectiveTime=warning.get('effectiveTime', 'N/A'),
+                expireTime=warning.get('expireTime', 'N/A'),
+                description=warning.get('description', 'N/A'),
+                instruction=warning.get('instruction', 'N/A'),
+                sender=warning.get('sender', 'N/A')
             )
         
-        # 天气指数预报
         elif template_name.startswith("天气指数预报_"):
-            location_data = data.get('location', [{}])[0] if data.get('location') else {}
-            location_name = location_data.get('name', '未知地点')
+            days = template_name.split('_')[1]
             indices_data = data.get('daily', [])
+            location_data = data.get('location', {})
             
             if not indices_data:
-                return "天气指数数据为空"
+                return f"{days}天天气指数数据为空"
+            
+            # 天气指数类型映射
+            index_type_map = {
+                '1': '运动指数', '2': '洗车指数', '3': '穿衣指数', '4': '钓鱼指数',
+                '5': '紫外线指数', '6': '旅游指数', '7': '花粉过敏指数', '8': '舒适度指数',
+                '9': '感冒指数', '10': '空气污染扩散条件指数', '11': '空调开启指数',
+                '12': '太阳镜指数', '13': '化妆指数', '14': '晾晒指数', '15': '交通指数',
+                '16': '防晒指数'
+            }
+            
+            # 指数等级映射
+            def get_index_level(index_type, level):
+                level_map = {
+                    '1': {'1': '适宜', '2': '较适宜', '3': '较不宜'},
+                    '2': {'1': '适宜', '2': '较适宜', '3': '较不宜', '4': '不宜'},
+                    '3': {'1': '寒冷', '2': '冷', '3': '较冷', '4': '较舒适', '5': '舒适', '6': '热', '7': '炎热'},
+                    '4': {'1': '适宜', '2': '较适宜', '3': '不宜'},
+                    '5': {'1': '最弱', '2': '弱', '3': '中等', '4': '强', '5': '很强'},
+                    '6': {'1': '适宜', '2': '较适宜', '3': '一般', '4': '较不宜', '5': '不适宜'},
+                    '7': {'1': '极不易发', '2': '不易发', '3': '较易发', '4': '易发', '5': '极易发'},
+                    '8': {'1': '舒适', '2': '较舒适', '3': '较不舒适', '4': '很不舒适', '5': '极不舒适', '6': '不舒适', '7': '非常不舒适'},
+                    '9': {'1': '少发', '2': '较易发', '3': '易发', '4': '极易发'},
+                    '10': {'1': '优', '2': '良', '3': '中', '4': '较差', '5': '很差'},
+                    '11': {'1': '长时间开启', '2': '部分时间开启', '3': '较少开启', '4': '开启制暖空调'},
+                    '12': {'1': '不需要', '2': '需要', '3': '必要', '4': '很必要', '5': '非常必要'},
+                    '13': {'1': '保湿', '2': '保湿防晒', '3': '去油防晒', '4': '防脱水防晒', '5': '去油', '6': '防脱水', '7': '防晒', '8': '滋润保湿'},
+                    '14': {'1': '极适宜', '2': '适宜', '3': '基本适宜', '4': '不太适宜', '5': '不宜', '6': '不适宜'},
+                    '15': {'1': '良好', '2': '较好', '3': '一般', '4': '较差', '5': '很差'},
+                    '16': {'1': '弱', '2': '较弱', '3': '中等', '4': '强', '5': '极强'}
+                }
+                return level_map.get(index_type, {}).get(str(level), str(level))
             
             indices_lines = []
-            for index in indices_data:
-                name = index.get('name', 'N/A')
-                category = index.get('category', 'N/A')
-                level = index.get('level', 'N/A')
-                desc = index.get('desc', 'N/A')
-                indices_lines.append(f"{name}: {category} (等级{level}) - {desc}")
+            for day in indices_data:
+                date = day.get('fxDate', 'N/A')
+                index_info = []
+                for idx in day.get('index', []):
+                    index_type = idx.get('type', 'N/A')
+                    index_level = idx.get('level', 'N/A')
+                    index_name = index_type_map.get(index_type, f'指数{index_type}')
+                    level_name = get_index_level(index_type, index_level)
+                    index_desc = idx.get('desc', 'N/A')
+                    index_info.append(f"{index_name}: {level_name} - {index_desc}")
+                indices_lines.append(f"{date}:\n" + "\n".join(index_info))
             
-            indices_data_str = "\n".join(indices_lines)
+            indices_data_str = "\n\n".join(indices_lines)
             
             return template.format(
-                location=location_name,
+                location=location_data.get('name', 'N/A'),
                 indices_data=indices_data_str,
                 updateTime=data.get('updateTime', 'N/A')
             )
         
-        # 实时空气质量
         elif template_name == "实时空气质量":
-            location_data = data.get('location', {})
-            location_name = location_data.get('name', '未知地点')
             air_data = data.get('current', {})
+            location_data = data.get('location', {})
+            
+            # AQI类型映射
+            aqi_type_map = {
+                'cn-mee': '中国环境部标准',
+                'us-epa': '美国EPA标准',
+                'eu-eea': '欧洲环境署标准',
+                'qaqi': '通用AQI标准'
+            }
+            
+            # 空气质量等级映射
+            category_map = {
+                '1': '优', '2': '良', '3': '轻度污染', '4': '中度污染',
+                '5': '重度污染', '6': '严重污染'
+            }
+            
+            # 首要污染物映射
+            pollutant_map = {
+                'pm2p5': 'PM2.5', 'pm10': 'PM10', 'so2': '二氧化硫',
+                'no2': '二氧化氮', 'co': '一氧化碳', 'o3': '臭氧'
+            }
+            
+            aqi_display = air_data.get('aqi', 'N/A')
+            aqi_category = air_data.get('category', 'N/A')
+            primary_pollutant = air_data.get('primaryPollutant', 'N/A')
+            
+            # 转换首要污染物显示
+            display_primary_pollutant = pollutant_map.get(primary_pollutant, primary_pollutant)
             
             return template.format(
-                location=location_name,
-                aqi=air_data.get('aqi', 'N/A'),
-                category=air_data.get('category', 'N/A'),
-                primaryPollutant=air_data.get('primaryPollutant', 'N/A'),
+                location=location_data.get('name', 'N/A'),
+                aqi=aqi_display,
+                category=category_map.get(aqi_category, aqi_category),
+                primaryPollutant=display_primary_pollutant,
                 pm2p5=air_data.get('pm2p5', 'N/A'),
                 pm10=air_data.get('pm10', 'N/A'),
                 so2=air_data.get('so2', 'N/A'),
@@ -473,35 +665,40 @@ def format_weather_response(template_name: str, data: Dict[str, Any], config: Di
                 pubTime=air_data.get('pubTime', 'N/A')
             )
         
-        # 空气质量每日预报
         elif template_name == "空气质量每日预报":
-            location_data = data.get('location', {})
-            location_name = location_data.get('name', '未知地点')
             daily_data = data.get('daily', [])
+            location_data = data.get('location', {})
             
             if not daily_data:
                 return "空气质量日预报数据为空"
             
             air_daily_lines = []
-            for day in daily_data[:7]:
-                date = day.get('fxDate', '')
+            for day in daily_data:
+                date = day.get('fxDate', 'N/A')
                 aqi = day.get('aqi', 'N/A')
                 category = day.get('category', 'N/A')
-                air_daily_lines.append(f"{date}: AQI {aqi} - {category}")
+                primary_pollutant = day.get('primaryPollutant', 'N/A')
+                
+                # 空气质量等级映射
+                category_map = {
+                    '1': '优', '2': '良', '3': '轻度污染', '4': '中度污染',
+                    '5': '重度污染', '6': '严重污染'
+                }
+                display_category = category_map.get(category, category)
+                
+                air_daily_lines.append(f"{date}: AQI {aqi} - {display_category}")
             
             air_daily_forecast = "\n".join(air_daily_lines)
             
             return template.format(
-                location=location_name,
+                location=location_data.get('name', 'N/A'),
                 air_daily_forecast=air_daily_forecast,
                 updateTime=data.get('updateTime', 'N/A')
             )
         
-        # 空气质量小时预报
         elif template_name == "空气质量小时预报":
-            location_data = data.get('location', {})
-            location_name = location_data.get('name', '未知地点')
             hourly_data = data.get('hourly', [])
+            location_data = data.get('location', {})
             
             if not hourly_data:
                 return "空气质量小时预报数据为空"
@@ -511,12 +708,20 @@ def format_weather_response(template_name: str, data: Dict[str, Any], config: Di
                 time = hour.get('fxTime', '').split('T')[1][:5] if 'T' in hour.get('fxTime', '') else hour.get('fxTime', '')
                 aqi = hour.get('aqi', 'N/A')
                 category = hour.get('category', 'N/A')
-                air_hourly_lines.append(f"{time}: AQI {aqi} - {category}")
+                
+                # 空气质量等级映射
+                category_map = {
+                    '1': '优', '2': '良', '3': '轻度污染', '4': '中度污染',
+                    '5': '重度污染', '6': '严重污染'
+                }
+                display_category = category_map.get(category, category)
+                
+                air_hourly_lines.append(f"{time}: AQI {aqi} - {display_category}")
             
             air_hourly_forecast = "\n".join(air_hourly_lines)
             
             return template.format(
-                location=location_name,
+                location=location_data.get('name', 'N/A'),
                 air_hourly_forecast=air_hourly_forecast,
                 updateTime=data.get('updateTime', 'N/A')
             )
