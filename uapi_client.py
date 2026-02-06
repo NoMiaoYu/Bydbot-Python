@@ -37,23 +37,77 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 if method.upper() == 'GET':
+                    logging.info(f"UAPI GET请求: {url} with params {params}")
                     async with session.get(url, params=params, headers=headers) as response:
-                        if response.status == 200:
-                            return await response.json()
-                        else:
+                        # 检查响应内容长度，防止响应过大
+                        content_length = response.headers.get('Content-Length')
+                        if content_length:
+                            size_mb = int(content_length) / (1024 * 1024)
+                            if size_mb > 10:  # 限制10MB
+                                logging.warning(f"UAPI响应过大 {endpoint}: {size_mb:.2f}MB")
+                                return None
+                        
+                        # 对于B站等API，即使是错误状态码也可能包含有用信息，尝试解析响应
+                        try:
+                            result = await response.json()
+                            
+                            # 对B站API添加额外日志记录
+                            if '/social/bilibili/' in endpoint:
+                                logging.info(f"B站API {endpoint} 响应: 状态码={response.status}, 数据={result}")
+                            
+                            # 对于200状态码，直接返回结果
+                            if response.status == 200:
+                                logging.info(f"UAPI GET请求成功: {endpoint}, 返回数据长度: {len(str(result)) if result else 0}")
+                                return result
+                            else:
+                                # 对于非200状态码，仍然返回解析后的JSON内容，让上层处理
+                                logging.warning(f"UAPI GET请求收到非200响应 {url}: {response.status}, 响应内容: {result}")
+                                return result
+                        except aiohttp.ContentTypeError:
+                            # 如果响应不是JSON格式，记录错误并返回None
                             error_text = await response.text()
-                            logging.error(f"UAPI GET请求失败 {url}: {response.status} - {error_text}")
+                            logging.error(f"UAPI GET请求失败 {url}: {response.status} - 非JSON响应: {error_text[:200]}...")
                             return None
                 elif method.upper() == 'POST':
+                    logging.info(f"UAPI POST请求: {url} with json_data keys: {list(json_data.keys()) if json_data else 'None'}")
                     async with session.post(url, params=params, json=json_data, headers=headers) as response:
-                        if response.status == 200:
-                            return await response.json()
-                        else:
+                        # 检查响应内容长度，防止响应过大
+                        content_length = response.headers.get('Content-Length')
+                        if content_length:
+                            size_mb = int(content_length) / (1024 * 1024)
+                            if size_mb > 10:  # 限制10MB
+                                logging.warning(f"UAPI响应过大 {endpoint}: {size_mb:.2f}MB")
+                                return None
+                        
+                        # 对于B站等API，即使是错误状态码也可能包含有用信息，尝试解析响应
+                        try:
+                            result = await response.json()
+                            
+                            # 对B站API添加额外日志记录
+                            if '/social/bilibili/' in endpoint:
+                                logging.info(f"B站API {endpoint} 响应: 状态码={response.status}, 数据={result}")
+                            
+                            # 对于200状态码，直接返回结果
+                            if response.status == 200:
+                                logging.info(f"UAPI POST请求成功: {endpoint}, 返回数据长度: {len(str(result)) if result else 0}")
+                                return result
+                            else:
+                                # 对于非200状态码，仍然返回解析后的JSON内容，让上层处理
+                                logging.warning(f"UAPI POST请求收到非200响应 {url}: {response.status}, 响应内容: {result}")
+                                return result
+                        except aiohttp.ContentTypeError:
+                            # 如果响应不是JSON格式，记录错误并返回None
                             error_text = await response.text()
-                            logging.error(f"UAPI POST请求失败 {url}: {response.status} - {error_text}")
+                            logging.error(f"UAPI POST请求失败 {url}: {response.status} - 非JSON响应: {error_text[:200]}...")
                             return None
+        except aiohttp.ClientConnectorError as e:
+            logging.error(f"UAPI网络连接错误 {endpoint}: {e}")
+            return None
+        except asyncio.TimeoutError as e:
+            logging.error(f"UAPI请求超时 {endpoint}: {e}")
+            return None
         except Exception as e:
-            logging.error(f"UAPI请求异常 {endpoint}: {e}")
+            logging.error(f"UAPI请求异常 {endpoint}: {type(e).__name__} - {e}")
             return None
 
     async def _make_request_with_fallback(self, endpoint: str, get_params: Optional[Dict[str, Any]] = None, 
@@ -346,8 +400,23 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI随机图片请求失败 {url}: {response.status} - {error_text}")
@@ -376,8 +445,23 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI必应壁纸请求失败 {url}: {response.status} - {error_text}")
@@ -419,8 +503,23 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI二维码请求失败 {url}: {response.status} - {error_text}")
@@ -448,8 +547,23 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI GrAvatar请求失败 {url}: {response.status} - {error_text}")
@@ -472,8 +586,23 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI摸摸头GIF请求失败 {url}: {response.status} - {error_text}")
@@ -499,8 +628,23 @@ class UApiClient:
 
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.post(url, data=form_data, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI摸摸头GIF POST请求失败 {url}: {response.status} - {error_text}")
@@ -554,8 +698,23 @@ class UApiClient:
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
+                    # 检查响应内容长度，防止响应过大
+                    content_length = response.headers.get('Content-Length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
+                            return None
+                    
                     if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
+                        # 读取响应内容，但限制大小
+                        content = await response.read()
+                        size_mb = len(content) / (1024 * 1024)
+                        if size_mb > 10:  # 限制10MB
+                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                            return None
+                        
+                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
                         logging.error(f"UAPI每日新闻图请求失败 {url}: {response.status} - {error_text}")

@@ -192,6 +192,11 @@
     "cache_ttl": 600
   },
 
+  "uapi_rate_limit": {
+    "max_calls_per_minute": 10,
+    "enable_per_user_limits": true
+  },
+
   "weather_commands": {
     "城市搜索": "/geo/v2/city/lookup",
     "热门城市查询": "/geo/v2/city/top",

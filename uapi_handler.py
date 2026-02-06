@@ -6,9 +6,49 @@ Bydbot - UAPI处理器
 import logging
 from typing import Dict, Any, Optional, List
 from uapi_client import UApiClient
+import time
+from collections import defaultdict
+import os
 
 
-def format_uapi_response(command_name: str, data: Dict[str, Any], config: Dict[str, Any]) -> str:
+# API调用频率限制相关
+# 使用字典记录每个用户在每个群的API调用次数
+uapi_usage = defaultdict(lambda: defaultdict(list))
+
+def check_api_rate_limit(user_id: str, group_id: str, config: Dict[str, Any]) -> tuple[bool, str]:
+    """
+    检查API调用频率限制
+    :param user_id: 用户ID
+    :param group_id: 群ID
+    :param config: 配置
+    :return: (是否允许调用, 拒绝原因)
+    """
+    # 从配置中获取限制参数，默认值
+    rate_limit_config = config.get('uapi_rate_limit', {})
+    max_calls = rate_limit_config.get('max_calls_per_minute', 10)  # 每分钟最大调用次数
+    time_window = 60  # 时间窗口（秒）
+    
+    current_time = time.time()
+    
+    # 清理过期的记录
+    user_group_key = (user_id, group_id)
+    uapi_usage[user_group_key] = [
+        call_time for call_time in uapi_usage[user_group_key] 
+        if current_time - call_time < time_window
+    ]
+    
+    # 检查是否超过限制
+    if len(uapi_usage[user_group_key]) >= max_calls:
+        # 计算还需要等待多少秒
+        oldest_call = min(uapi_usage[user_group_key])
+        wait_time = int(time_window - (current_time - oldest_call))
+        return False, f"API调用频率超限，请等待 {wait_time} 秒后重试"
+    
+    # 记录本次调用
+    uapi_usage[user_group_key].append(current_time)
+    return True, ""
+
+def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -> str:
     """
     格式化UAPI响应数据
     :param command_name: 命令名称
@@ -17,107 +57,328 @@ def format_uapi_response(command_name: str, data: Dict[str, Any], config: Dict[s
     :return: 格式化后的消息字符串
     """
     try:
+        # 确保data是字典类型
+        if not isinstance(data, dict):
+            logging.warning(f"UAPI响应数据格式不正确: {type(data)}, 命令: {command_name}")
+            return f"UAPI响应数据格式错误: {str(data)[:200]}..."
+        
         # 根据不同的命令类型进行格式化
         if command_name == "B站直播间查询":
-            if not data or 'uid' not in data:
-                return "未找到直播间信息"
+            # 检查API是否返回了错误信息
+            if not data:
+                return "B站直播间查询失败：无响应数据或网络错误"
+            
+            # 检查是否包含错误信息 - B站API可能返回错误码或直接的错误信息
+            if isinstance(data, dict):
+                # 检查是否是标准的B站API响应格式，或包含错误信息
+                if 'code' in data:
+                    code = data.get('code')
+                    message = data.get('message', '')
+                    
+                    if code == -404 or code == 404 or '不存在' in str(message) or '404' in str(message):
+                        return "未找到该B站直播间，请检查房间号或主播UID是否正确"
+                    elif code == -502 or code == 502 or '上游' in str(message) or '风控' in str(message):
+                        return f"B站API错误：{message}（可能由于B站反爬机制）"
+                    elif code != 0:
+                        return f"B站直播间查询失败：{message or f'错误码 {code}'}"
+                
+                # 检查是否包含预期的直播数据
+                if 'uid' in data:
+                    status_map = {0: "🔴 未开播", 1: "🟢 直播中", 2: "🟡 轮播中"}
+                    status = status_map.get(data.get("live_status", 0), "❓ 未知")
 
-            status_map = {0: "🔴 未开播", 1: "🟢 直播中", 2: "🟡 轮播中"}
-            status = status_map.get(data.get("live_status", 0), "❓ 未知")
+                    uid = data.get('uid', 'N/A')
+                    title = data.get('title', 'N/A')
+                    online = f"{data.get('online', 0):,}"
+                    attention = f"{data.get('attention', 0):,}"
+                    parent_area = data.get('parent_area_name', 'N/A')
+                    area = data.get('area_name', 'N/A')
+                    room_id = data.get('room_id', 'N/A')
+                    short_id = data.get('short_id', 'N/A')
+                    live_time = data.get('live_time', 'N/A')
+                    tags = data.get('tags', 'N/A')
+                    hot_words = data.get('hot_words', [])
+                    hot_words_str = ', '.join(hot_words[:3]) if hot_words else 'N/A'  # 只显示前3个热词
+                    description = data.get('description', 'N/A')
+                    background = data.get('background', 'N/A')
+                    user_cover = data.get('user_cover', 'N/A')
 
-            uid = data.get('uid', 'N/A')
-            title = data.get('title', 'N/A')
-            online = f"{data.get('online', 0):,}"
-            attention = f"{data.get('attention', 0):,}"
-            parent_area = data.get('parent_area_name', 'N/A')
-            area = data.get('area_name', 'N/A')
-            room_id = data.get('room_id', 'N/A')
-            short_id = data.get('short_id', 'N/A')
-            live_time = data.get('live_time', 'N/A')
-            tags = data.get('tags', 'N/A')
-            hot_words = data.get('hot_words', [])
-            hot_words_str = ', '.join(hot_words[:3]) if hot_words else 'N/A'  # 只显示前3个热词
-            description = data.get('description', 'N/A')
-            background = data.get('background', 'N/A')
-            user_cover = data.get('user_cover', 'N/A')
+                    room_link = f"https://live.bilibili.com/{room_id}"
+                    if short_id and short_id != '0' and short_id != 'N/A':
+                        room_link = f"https://live.bilibili.com/{short_id}"
 
-            room_link = f"https://live.bilibili.com/{room_id}"
-            if short_id and short_id != '0' and short_id != 'N/A':
-                room_link = f"https://live.bilibili.com/{short_id}"
-
-            return f"[B站直播间查询]\n主播UID: {uid}\n标题: {title}\n状态: {status}\n人气: {online}\n粉丝: {attention}\n分区: {parent_area} - {area}\n标签: {tags}\n热词: {hot_words_str}\n开播时间: {live_time}\n直播间: {room_link}\n描述: {description}"
+                    return f"[B站直播间查询]\n主播UID: {uid}\n标题: {title}\n状态: {status}\n人气: {online}\n粉丝: {attention}\n分区: {parent_area} - {area}\n标签: {tags}\n热词: {hot_words_str}\n开播时间: {live_time}\n直播间: {room_link}\n描述: {description}"
+                else:
+                    # 没有找到uid字段，检查是否是错误信息
+                    if 'message' in data:
+                        msg = data['message']
+                        if '404' in str(msg) or '不存在' in str(msg):
+                            return "未找到该B站直播间，请检查房间号或主播UID是否正确"
+                    return "未找到直播间信息或查询失败"
+            else:
+                # data不是字典，返回错误信息
+                return f"B站直播间查询失败：响应格式错误 - {str(data)}"
 
         elif command_name == "B站用户查询":
-            if not data or 'data' not in data:
-                return "未找到用户信息"
+            # 检查API是否返回了错误信息
+            if not data:
+                return "B站用户查询失败：无响应数据或网络错误"
+            
+            # 确保数据是字典格式
+            if not isinstance(data, dict):
+                return f"B站用户查询失败：响应格式错误 - {str(data)}"
+            
+            # 检查是否是标准的B站API响应格式 {code, message, data}
+            if 'code' in data:
+                code = data.get('code')
+                message = data.get('message', '')
+                
+                if code == -404 or code == 404 or '不存在' in str(message) or '404' in str(message):
+                    return "未找到该B站用户，请检查UID是否正确"
+                elif code == -502 or code == 502 or '上游' in str(message) or '风控' in str(message):
+                    return f"B站API错误：{message}（可能由于B站反爬机制）"
+                elif code != 0:
+                    return f"B站用户查询失败：{message or f'错误码 {code}'}"
+                
+                # 如果code为0但没有data字段，也表示错误或格式异常
+                if code == 0 and 'data' not in data:
+                    logging.warning(f"B站用户API返回code为0但无data字段: {data}")
+                    return "B站用户查询失败：响应数据格式异常"
+            
+            # 检查是否包含data字段（标准UAPI响应格式）
+            if 'data' in data:
+                user_data = data['data']
+                # 尝试从用户数据中提取各个字段
+                name = user_data.get('name', user_data.get('uname', 'N/A'))  # 有些API可能使用uname
+                level = user_data.get('level', user_data.get('level_info', {}).get('current_level', 'N/A'))  # level_info.current_level是另一种可能的格式
+                sex = user_data.get('sex', 'N/A')
+                sign = user_data.get('sign', user_data.get('signature', 'N/A'))  # signature是另一种可能的字段名
+                face = user_data.get('face', user_data.get('face_url', 'N/A'))  # face_url是另一种可能的字段名
+                mid = user_data.get('mid', user_data.get('id', user_data.get('userID', 'N/A')))  # 尝试其他可能的ID字段名
+                birthday = user_data.get('birthday', user_data.get('user_birthday', 'N/A'))  # user_birthday是另一种可能的字段名
+                place = user_data.get('place', user_data.get('address', 'N/A'))  # address是另一种可能的字段名
+                description = user_data.get('description', 'N/A')
+                article_count = user_data.get('article_count', user_data.get('articles', 'N/A'))  # articles是另一种可能的字段名
+                following = user_data.get('following', user_data.get('attention', 'N/A'))  # attention是另一种可能的字段名
+                follower = user_data.get('follower', user_data.get('fans', 'N/A'))  # fans是另一种可能的字段名
+                likes = user_data.get('likes', user_data.get('like_num', 'N/A'))  # like_num是另一种可能的字段名
+                archive_view = user_data.get('archive_view', 'N/A')
+                live_room_id = user_data.get('live_room_id', user_data.get('room_id', 'N/A'))  # room_id是另一种可能的字段名
+                live_room_status = user_data.get('live_room_status', user_data.get('live_status', 'N/A'))  # live_status是另一种可能的字段名
+                pendant = user_data.get('pendant', 'N/A')
+                nameplate = user_data.get('nameplate', 'N/A')
+                official_verify_type = user_data.get('official_verify_type', user_data.get('official', {}).get('type', 'N/A'))  # official.type是另一种可能的格式
+                official_verify_desc = user_data.get('official_verify_desc', user_data.get('official', {}).get('desc', 'N/A'))  # official.desc是另一种可能的格式
+                vip_type = user_data.get('vip_type', user_data.get('vip', {}).get('type', 'N/A'))  # vip.type是另一种可能的格式
+                vip_status = user_data.get('vip_status', user_data.get('vip', {}).get('status', 'N/A'))  # vip.status是另一种可能的格式
 
-            user_data = data['data']
-            name = user_data.get('name', 'N/A')
-            level = user_data.get('level', 'N/A')
-            sex = user_data.get('sex', 'N/A')
-            sign = user_data.get('sign', 'N/A')
-            face = user_data.get('face', 'N/A')
-            mid = user_data.get('mid', 'N/A')
-            birthday = user_data.get('birthday', 'N/A')
-            place = user_data.get('place', 'N/A')
-            description = user_data.get('description', 'N/A')
-            article_count = user_data.get('article_count', 'N/A')
-            following = user_data.get('following', 'N/A')
-            follower = user_data.get('follower', 'N/A')
-            likes = user_data.get('likes', 'N/A')
-            archive_view = user_data.get('archive_view', 'N/A')
-            live_room_id = user_data.get('live_room_id', 'N/A')
-            live_room_status = user_data.get('live_room_status', 'N/A')
-            pendant = user_data.get('pendant', 'N/A')
-            nameplate = user_data.get('nameplate', 'N/A')
-            official_verify_type = user_data.get('official_verify_type', 'N/A')
-            official_verify_desc = user_data.get('official_verify_desc', 'N/A')
-            vip_type = user_data.get('vip_type', 'N/A')
-            vip_status = user_data.get('vip_status', 'N/A')
+                # 构建用户信息，过滤掉空值、0值或N/A值
+                user_info_parts = ["[B站用户查询]"]
+                if mid and str(mid) != 'N/A' and str(mid) != '0':
+                    user_info_parts.append(f"UID: {mid}")
+                if name and str(name) != 'N/A' and str(name) != '':
+                    user_info_parts.append(f"昵称: {name}")
+                if level and str(level) != 'N/A' and str(level) != '0':
+                    user_info_parts.append(f"等级: {level}")
+                if sex and str(sex) != 'N/A' and str(sex) != '':
+                    user_info_parts.append(f"性别: {sex}")
+                if birthday and str(birthday) != 'N/A' and str(birthday) != '':
+                    user_info_parts.append(f"生日: {birthday}")
+                if place and str(place) != 'N/A' and str(place) != '':
+                    user_info_parts.append(f"地区: {place}")
+                if sign and str(sign) != 'N/A' and str(sign) != '':
+                    user_info_parts.append(f"签名: {sign}")
+                if description and str(description) != 'N/A' and str(description) != '':
+                    user_info_parts.append(f"描述: {description}")
+                if article_count and str(article_count) != 'N/A' and str(article_count) != '0':
+                    user_info_parts.append(f"文章数: {article_count}")
+                if following and str(following) != 'N/A' and str(following) != '0':
+                    user_info_parts.append(f"关注数: {following}")
+                if follower and str(follower) != 'N/A' and str(follower) != '0':
+                    user_info_parts.append(f"粉丝数: {follower}")
+                if likes and str(likes) != 'N/A' and str(likes) != '0':
+                    user_info_parts.append(f"获赞数: {likes}")
+                if archive_view and str(archive_view) != 'N/A' and str(archive_view) != '0':
+                    user_info_parts.append(f"播放量: {archive_view}")
+                if live_room_id and str(live_room_id) != 'N/A' and str(live_room_id) != '0':
+                    user_info_parts.append(f"直播间ID: {live_room_id}")
+                if live_room_status and str(live_room_status) != 'N/A' and str(live_room_status) != '0':
+                    user_info_parts.append(f"直播状态: {live_room_status}")
+                if pendant and str(pendant) != 'N/A' and str(pendant) != '0':
+                    user_info_parts.append(f"头像框: {pendant}")
+                if nameplate and str(nameplate) != 'N/A' and str(nameplate) != '0':
+                    user_info_parts.append(f"勋章: {nameplate}")
+                if official_verify_type and str(official_verify_type) != 'N/A' and str(official_verify_type) != '0':
+                    user_info_parts.append(f"认证类型: {official_verify_type}")
+                if official_verify_desc and str(official_verify_desc) != 'N/A' and str(official_verify_desc) != '0':
+                    user_info_parts.append(f"认证描述: {official_verify_desc}")
+                # 只有当vip_type不是0时才显示VIP类型
+                if vip_type and str(vip_type) != 'N/A' and str(vip_type) != '0':
+                    user_info_parts.append(f"VIP类型: {vip_type}")
+                # 只有当vip_status不是0时才显示VIP状态
+                if vip_status and str(vip_status) != 'N/A' and str(vip_status) != '0':
+                    user_info_parts.append(f"VIP状态: {vip_status}")
 
-            return f"[B站用户查询]\nUID: {mid}\n昵称: {name}\n等级: {level}\n性别: {sex}\n生日: {birthday}\n地区: {place}\n签名: {sign}\n描述: {description}\n文章数: {article_count}\n关注数: {following}\n粉丝数: {follower}\n获赞数: {likes}\n播放量: {archive_view}\n直播间ID: {live_room_id}\n直播状态: {live_room_status}\n头像框: {pendant}\n勋章: {nameplate}\n认证类型: {official_verify_type}\n认证描述: {official_verify_desc}\nVIP类型: {vip_type}\nVIP状态: {vip_status}"
+                # 返回用户信息和头像URL的元组
+                user_info = '\n'.join(user_info_parts)
+                return {"text": user_info, "face_url": face}
+            else:
+                # 没有data字段，检查是否是B站API透传的直接响应格式
+                # 根据日志显示，API可能直接返回用户信息，没有包装在data字段中
+                if 'mid' in data and 'name' in data:
+                    # 这是直接的用户数据格式，直接使用data作为用户数据
+                    user_data = data
+                    name = user_data.get('name', 'N/A')
+                    level = user_data.get('level', 'N/A')
+                    sex = user_data.get('sex', 'N/A')
+                    sign = user_data.get('sign', 'N/A')
+                    face = user_data.get('face', 'N/A')
+                    mid = user_data.get('mid', 'N/A')
+                    birthday = user_data.get('birthday', 'N/A')
+                    # 注意：日志显示的字段中没有place/address字段，所以这些会是N/A
+                    place = user_data.get('place', user_data.get('address', 'N/A'))
+                    description = user_data.get('description', 'N/A')
+                    article_count = user_data.get('article_count', 'N/A')
+                    following = user_data.get('following', user_data.get('attention', 'N/A'))  # following是B站实际返回的字段名
+                    follower = user_data.get('follower', user_data.get('fans', 'N/A'))  # follower是B站实际返回的字段名
+                    likes = user_data.get('likes', user_data.get('like_num', 'N/A'))
+                    archive_view = user_data.get('archive_view', user_data.get('archive_count', 'N/A'))  # 使用archive_count作为播放量的替代
+                    live_room_id = user_data.get('live_room_id', user_data.get('room_id', 'N/A'))
+                    live_room_status = user_data.get('live_room_status', user_data.get('live_status', 'N/A'))
+                    pendant = user_data.get('pendant', 'N/A')
+                    nameplate = user_data.get('nameplate', 'N/A')
+                    official_verify_type = user_data.get('official_verify_type', user_data.get('official', {}).get('type', 'N/A'))
+                    official_verify_desc = user_data.get('official_verify_desc', user_data.get('official', {}).get('desc', 'N/A'))
+                    vip_type = user_data.get('vip_type', user_data.get('vip', {}).get('type', 'N/A'))
+                    vip_status = user_data.get('vip_status', user_data.get('vip', {}).get('status', 'N/A'))
+
+                    # 构建用户信息，过滤掉空值、0值或N/A值
+                    user_info_parts = ["[B站用户查询]"]
+                    if mid and str(mid) != 'N/A' and str(mid) != '0':
+                        user_info_parts.append(f"UID: {mid}")
+                    if name and str(name) != 'N/A' and str(name) != '':
+                        user_info_parts.append(f"昵称: {name}")
+                    if level and str(level) != 'N/A' and str(level) != '0':
+                        user_info_parts.append(f"等级: {level}")
+                    if sex and str(sex) != 'N/A' and str(sex) != '':
+                        user_info_parts.append(f"性别: {sex}")
+                    if birthday and str(birthday) != 'N/A' and str(birthday) != '':
+                        user_info_parts.append(f"生日: {birthday}")
+                    if place and str(place) != 'N/A' and str(place) != '':
+                        user_info_parts.append(f"地区: {place}")
+                    if sign and str(sign) != 'N/A' and str(sign) != '':
+                        user_info_parts.append(f"签名: {sign}")
+                    if description and str(description) != 'N/A' and str(description) != '':
+                        user_info_parts.append(f"描述: {description}")
+                    if article_count and str(article_count) != 'N/A' and str(article_count) != '0':
+                        user_info_parts.append(f"文章数: {article_count}")
+                    if following and str(following) != 'N/A' and str(following) != '0':
+                        user_info_parts.append(f"关注数: {following}")
+                    if follower and str(follower) != 'N/A' and str(follower) != '0':
+                        user_info_parts.append(f"粉丝数: {follower}")
+                    if likes and str(likes) != 'N/A' and str(likes) != '0':
+                        user_info_parts.append(f"获赞数: {likes}")
+                    if archive_view and str(archive_view) != 'N/A' and str(archive_view) != '0':
+                        user_info_parts.append(f"播放量: {archive_view}")
+                    if live_room_id and str(live_room_id) != 'N/A' and str(live_room_id) != '0':
+                        user_info_parts.append(f"直播间ID: {live_room_id}")
+                    if live_room_status and str(live_room_status) != 'N/A' and str(live_room_status) != '0':
+                        user_info_parts.append(f"直播状态: {live_room_status}")
+                    if pendant and str(pendant) != 'N/A' and str(pendant) != '0':
+                        user_info_parts.append(f"头像框: {pendant}")
+                    if nameplate and str(nameplate) != 'N/A' and str(nameplate) != '0':
+                        user_info_parts.append(f"勋章: {nameplate}")
+                    if official_verify_type and str(official_verify_type) != 'N/A' and str(official_verify_type) != '0':
+                        user_info_parts.append(f"认证类型: {official_verify_type}")
+                    if official_verify_desc and str(official_verify_desc) != 'N/A' and str(official_verify_desc) != '0':
+                        user_info_parts.append(f"认证描述: {official_verify_desc}")
+                    # 只有当vip_type不是0时才显示VIP类型
+                    if vip_type and str(vip_type) != 'N/A' and str(vip_type) != '0':
+                        user_info_parts.append(f"VIP类型: {vip_type}")
+                    # 只有当vip_status不是0时才显示VIP状态
+                    if vip_status and str(vip_status) != 'N/A' and str(vip_status) != '0':
+                        user_info_parts.append(f"VIP状态: {vip_status}")
+
+                    # 返回用户信息和头像URL的元组
+                    user_info = '\n'.join(user_info_parts)
+                    return {"text": user_info, "face_url": face}
+                else:
+                    # 没有找到标准格式也没有找到直接的用户数据格式
+                    if 'message' in data:
+                        msg = data['message']
+                        if '404' in str(msg) or '不存在' in str(msg):
+                            return "未找到该B站用户，请检查UID是否正确"
+                    logging.warning(f"B站用户API响应格式不符合预期: {data}")
+                    return f"B站用户查询失败：响应格式异常 - 无法找到用户数据"
 
         elif command_name == "B站投稿查询":
-            if not data or 'videos' not in data:
-                return "未找到投稿信息"
-
-            total = data.get('total', 0)
-            page = data.get('page', 'N/A')
-            size = data.get('size', 'N/A')
-            mid = data.get('mid', 'N/A')
-            name = data.get('name', 'N/A')
-            videos = data['videos'][:5]  # 只显示前5个视频
-
-            video_list = []
-            for video in videos:
-                aid = video.get('aid', 'N/A')
-                bvid = video.get('bvid', 'N/A')
-                title = video.get('title', 'N/A')
-                cover = video.get('cover', 'N/A')
-                duration = video.get('duration', 0)
-                play_count = f"{video.get('play_count', 0):,}"
-                danmaku_count = f"{video.get('danmaku', 0):,}"
-                comment_count = f"{video.get('comment', 0):,}"
-                like_count = f"{video.get('like', 0):,}"
-                coin_count = f"{video.get('coin', 0):,}"
-                share_count = f"{video.get('share', 0):,}"
-                favorite_count = f"{video.get('favorite', 0):,}"
-                publish_time = video.get('publish_time', 'N/A')
-                pubdate = video.get('pubdate', 'N/A')
-                description = video.get('description', 'N/A')[:50]  # 限制描述长度
-                tag = video.get('tag', 'N/A')
-                typename = video.get('typename', 'N/A')
-                copyright = video.get('copyright', 'N/A')
-                pic = video.get('pic', 'N/A')
+            # 检查API是否返回了错误信息
+            if not data:
+                return "B站投稿查询失败：无响应数据或网络错误"
+            
+            # 检查是否包含错误信息 - B站API可能返回错误码或直接的错误信息
+            if isinstance(data, dict):
+                # 检查是否是标准的B站API响应格式，或包含错误信息
+                if 'code' in data:
+                    code = data.get('code')
+                    message = data.get('message', '')
+                    
+                    if code == -404 or code == 404 or '不存在' in str(message) or '404' in str(message):
+                        return "未找到该B站用户的投稿信息，请检查mid是否正确"
+                    elif code == -502 or code == 502 or '上游' in str(message) or '风控' in str(message):
+                        return f"B站API错误：{message}（可能由于B站反爬机制）"
+                    elif code != 0:
+                        return f"B站投稿查询失败：{message or f'错误码 {code}'}"
                 
-                mins = duration // 60
-                secs = duration % 60
-                duration_str = f"{mins}:{secs:02d}"
+                # 检查是否包含预期的视频数据
+                if 'videos' in data:
+                    total = data.get('total', 0)
+                    page = data.get('page', 'N/A')
+                    size = data.get('size', 'N/A')
+                    mid = data.get('mid', 'N/A')
+                    name = data.get('name', 'N/A')
+                    videos = data['videos'][:5]  # 只显示前5个视频
 
-                video_list.append(f"- {title} (BV: {bvid})\n  播放:{play_count}, 弹幕:{danmaku_count}, 时长:{duration_str}\n  发布时间: {pubdate}\n  类型: {typename}, 标签: {tag}")
+                    video_list = []
+                    for video in videos:
+                        aid = video.get('aid', 'N/A')
+                        bvid = video.get('bvid', 'N/A')
+                        title = video.get('title', 'N/A')
+                        cover = video.get('cover', 'N/A')
+                        duration = video.get('duration', 0)
+                        play_count = f"{video.get('play_count', 0):,}"
+                        danmaku_count = f"{video.get('danmaku', 0):,}"
+                        comment_count = f"{video.get('comment', 0):,}"
+                        like_count = f"{video.get('like', 0):,}"
+                        coin_count = f"{video.get('coin', 0):,}"
+                        share_count = f"{video.get('share', 0):,}"
+                        favorite_count = f"{video.get('favorite', 0):,}"
+                        publish_time = video.get('publish_time', 'N/A')
+                        pubdate = video.get('pubdate', 'N/A')
+                        description = video.get('description', 'N/A')[:50]  # 限制描述长度
+                        tag = video.get('tag', 'N/A')
+                        typename = video.get('typename', 'N/A')
+                        copyright = video.get('copyright', 'N/A')
+                        pic = video.get('pic', 'N/A')
+                        
+                        mins = duration // 60
+                        secs = duration % 60
+                        duration_str = f"{mins}:{secs:02d}"
 
-            video_str = "\n".join(video_list)
-            return f"[B站投稿查询]\nUP主: {name} (UID: {mid})\n总计稿件: {total}\n当前页: {page}/{size}\n最近投稿:\n{video_str}"
+                        video_list.append(f"- {title} (BV: {bvid})\n  播放:{play_count}, 弹幕:{danmaku_count}, 时长:{duration_str}\n  发布时间: {pubdate}\n  类型: {typename}, 标签: {tag}")
+
+                    video_str = "\n".join(video_list)
+                    return f"[B站投稿查询]\nUP主: {name} (UID: {mid})\n总计稿件: {total}\n当前页: {page}/{size}\n最近投稿:\n{video_str}"
+                else:
+                    # 没有找到videos字段，检查是否是错误信息
+                    if 'message' in data:
+                        msg = data['message']
+                        if '404' in str(msg) or '不存在' in str(msg):
+                            return "未找到该B站用户的投稿信息，请检查mid是否正确"
+                    return "未找到投稿信息或查询失败"
+            else:
+                # data不是字典，返回错误信息
+                return f"B站投稿查询失败：响应格式错误 - {str(data)}"
 
         elif command_name == "GitHub仓库查询":
             if not data or ('full_name' not in data and 'name' not in data):
@@ -1565,6 +1826,12 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
     :return: 格式化的响应消息
     """
     try:
+        # 检查API调用频率限制
+        if user_id:
+            allowed, reason = check_api_rate_limit(user_id, group_id, config)
+            if not allowed:
+                return reason
+
         # 检查UAPI是否启用
         uapi_config = config.get('uapi', {})
         if not uapi_config:
@@ -1623,10 +1890,54 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             if not args or not args[0].isdigit():
                 return "请提供B站用户UID\n示例: /B站用户查询 483307278"
 
+            # 提前导入需要的模块，以避免在异常处理时出现变量作用域问题
+            import aiohttp
+            import tempfile
+            import os
+
             uid = args[0]
             result = await api.get_bilibili_userinfo(uid=uid)
             if result:
-                return format_uapi_response(command_name, result, config)
+                # 先格式化结果，获得包含文本和头像URL的格式化结果
+                formatted_result = format_uapi_response(command_name, result, config)
+                
+                # 检查格式化结果是否是包含头像URL的特殊格式
+                if isinstance(formatted_result, dict) and "text" in formatted_result and "face_url" in formatted_result:
+                    
+                    text_info = formatted_result["text"]
+                    face_url = formatted_result["face_url"]
+                    
+                    # 如果头像URL存在且有效，则下载图片
+                    if face_url and face_url != 'N/A' and face_url.startswith('http'):
+                        try:
+                            # 下载头像图片
+                            timeout = aiohttp.ClientTimeout(total=10)
+                            async with aiohttp.ClientSession(timeout=timeout) as session:
+                                async with session.get(face_url) as resp:
+                                    if resp.status == 200:
+                                        image_data = await resp.read()
+                                        
+                                        # 保存到临时文件
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
+                                            tmp_file.write(image_data)
+                                            tmp_file_path = tmp_file.name
+                                        
+                                        # 返回包含文本和图片路径的特殊格式
+                                        return {"type": "uapi_bilibili_user", "text": text_info, "image_path": tmp_file_path}
+                                    else:
+                                        # 如果下载失败，仅返回文本信息
+                                        logging.warning(f"下载B站用户头像失败: {face_url}, 状态码: {resp.status}")
+                                        return text_info
+                        except Exception as e:
+                            logging.error(f"下载B站用户头像异常: {e}")
+                            # 如果下载异常，仅返回文本信息
+                            return text_info
+                    else:
+                        # 如果没有有效头像URL，仅返回文本信息
+                        return text_info
+                else:
+                    # 如果格式化结果不是特殊格式，直接返回格式化结果
+                    return formatted_result
             else:
                 return "B站用户查询失败"
 
@@ -2180,8 +2491,21 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 return "请提供图片文件路径\n示例: /无损压缩图片 image.jpg"
             
             image_path = args[0]
-            level = int(args[1]) if len(args) > 1 else 3
+            # 验证文件路径安全性，防止路径遍历
+            import os
+            if '..' in image_path or image_path.startswith('/') or ':' in image_path and image_path[1] == '\\':
+                return "无效的文件路径，不允许使用相对路径或绝对路径"
+            
+            try:
+                level = int(args[1]) if len(args) > 1 else 3
+                if level < 1 or level > 5:
+                    return "压缩等级必须在1-5之间"
+            except ValueError:
+                return "压缩等级必须是数字(1-5)"
+                
             format_param = args[2] if len(args) > 2 else "png"
+            if format_param not in ["png", "jpeg"]:
+                return "输出格式必须是png或jpeg"
             
             result = await api.post_image_compress(file_path=image_path, level=level, format_param=format_param)
             if result:
@@ -2206,10 +2530,35 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 return "请提供SVG文件路径\n示例: /SVG转图片 input.svg"
 
             svg_path = args[0]
+            # 验证文件路径安全性，防止路径遍历
+            import os
+            if '..' in svg_path or svg_path.startswith('/') or ':' in svg_path and svg_path[1] == '\\':
+                return "无效的文件路径，不允许使用相对路径或绝对路径"
+            
             format_param = args[1] if len(args) > 1 else "png"
-            width = int(args[2]) if len(args) > 2 and args[2].isdigit() else None
-            height = int(args[3]) if len(args) > 3 and args[3].isdigit() else None
-            quality = int(args[4]) if len(args) > 4 and args[4].isdigit() else 90
+            if format_param not in ["png", "jpeg", "jpg", "gif", "tiff", "bmp"]:
+                return "输出格式必须是png/jpeg/jpg/gif/tiff/bmp之一"
+                
+            try:
+                width = int(args[2]) if len(args) > 2 and args[2].isdigit() else None
+                if width and width <= 0:
+                    return "宽度必须是正整数"
+            except ValueError:
+                return "宽度必须是正整数"
+                
+            try:
+                height = int(args[3]) if len(args) > 3 and args[3].isdigit() else None
+                if height and height <= 0:
+                    return "高度必须是正整数"
+            except ValueError:
+                return "高度必须是正整数"
+                
+            try:
+                quality = int(args[4]) if len(args) > 4 and args[4].isdigit() else 90
+                if quality < 1 or quality > 100:
+                    return "质量必须在1-100之间"
+            except ValueError:
+                return "质量必须是1-100之间的数字"
 
             result = await api.post_image_svg(file_path=svg_path, format_param=format_param, 
                                            width=width, height=height, quality=quality)

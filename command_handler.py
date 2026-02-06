@@ -1020,7 +1020,30 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                 result = await handle_uapi_command(uapi_command_name, uapi_args, group_id, config, user_id)
                 
                 # 检查返回结果的类型
-                if isinstance(result, tuple):
+                if isinstance(result, dict):
+                    # 检查是否是包含文本和图片路径的特殊格式（如B站用户查询）
+                    if result.get("type") == "uapi_bilibili_user" and "text" in result:
+                        text_info = result["text"]
+                        image_path = result.get("image_path")
+                        
+                        # 先发送文本信息
+                        await send_group_msg(group_id, text_info)
+                        
+                        # 如果有图片路径，发送图片
+                        if image_path and os.path.exists(image_path):
+                            success = await send_group_img(group_id, image_path)
+                            if not success:
+                                logging.warning(f"发送B站用户头像失败: {image_path}")
+                            
+                            # 发送完后删除临时文件
+                            try:
+                                os.unlink(image_path)
+                            except Exception as e:
+                                logging.warning(f"删除临时头像文件失败 {image_path}: {e}")
+                    else:
+                        # 其他字典类型，按字符串处理
+                        await send_group_msg(group_id, str(result))
+                elif isinstance(result, tuple):
                     # 如果返回的是元组，第一个元素是消息类型，第二个是数据
                     msg_type, data = result
                     if msg_type == 'image' and data:
@@ -1044,15 +1067,23 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                     # 如果返回的是字节数据（图片），保存到临时文件并发送
                     import tempfile
                     import os
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-                        tmp_file.write(result)
-                        tmp_file_path = tmp_file.name
-                    
-                    success = await send_group_img(group_id, tmp_file_path)
-                    os.unlink(tmp_file_path)  # 删除临时文件
-                    
-                    if not success:
-                        await send_group_msg(group_id, f"发送{uapi_command_name}图片失败")
+                    tmp_file_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                            tmp_file.write(result)
+                            tmp_file_path = tmp_file.name
+                        
+                        success = await send_group_img(group_id, tmp_file_path)
+                        
+                        if not success:
+                            await send_group_msg(group_id, f"发送{uapi_command_name}图片失败")
+                    finally:
+                        # 确保临时文件被删除
+                        if tmp_file_path and os.path.exists(tmp_file_path):
+                            try:
+                                os.unlink(tmp_file_path)
+                            except Exception as e:
+                                logging.warning(f"删除临时文件失败 {tmp_file_path}: {e}")
                 elif result:
                     # 如果返回的是字符串，直接发送
                     await send_group_msg(group_id, result)
