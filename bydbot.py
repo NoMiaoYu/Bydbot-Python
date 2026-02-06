@@ -13,7 +13,12 @@ from typing import Dict, Any
 
 import websockets
 
-from command_handler import CMA_WEATHER_SUBSCRIBER_AVAILABLE
+# 检查CMA气象预警订阅模块是否可用
+try:
+    import cma_weather_subscriber
+    CMA_WEATHER_SUBSCRIBER_AVAILABLE = True
+except ImportError:
+    CMA_WEATHER_SUBSCRIBER_AVAILABLE = False
 
 # 设置事件循环策略（Windows兼容性）
 if sys.platform == 'win32':
@@ -21,6 +26,9 @@ if sys.platform == 'win32':
 
 # 全局变量用于跟踪广播模式
 broadcast_mode = {}  # {user_id: True} 表示该用户处于广播模式
+
+# UAPI可用性标志
+UAPI_AVAILABLE = True
 
 # 用于在模块间共享状态
 def get_broadcast_mode():
@@ -130,7 +138,14 @@ async def shutdown_handler():
 
 def get_help_message():
     """获取帮助信息"""
-    help_text = """=== Bydbot 帮助菜单 ===
+    # 从文件读取帮助信息
+    try:
+        help_file_path = os.path.join(os.path.dirname(__file__), 'help命令.txt')
+        with open(help_file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        # 如果文件不存在，返回默认帮助信息
+        help_text = """=== Bydbot 帮助菜单 ===
     
  earthquak earthquake bot
   bydbot v2.0 - 多功能信息推送机器人
@@ -155,6 +170,20 @@ def get_help_message():
 • /实时天气预警 [lat] [lon] - 查询天气预警
 • /实时空气质量 [lat] [lon] - 查询空气质量
 
+【UAPI功能】
+• /B站直播间查询 [mid/room_id] [ID] - 查询B站直播间
+• /B站用户查询 [UID] - 查询B站用户信息
+• /B站投稿查询 [mid] - 查询B站用户投稿
+• /GitHub仓库查询 [owner] [repo] - 查询GitHub仓库
+• /热榜查询 [type] - 查询各平台热榜
+• /世界时间查询 [city] - 查询世界时间
+• /天气查询 [city] - 查询天气（UAPI）
+• /手机归属地查询 [phone] - 查询手机号归属地
+• /随机数生成 [min] [max] [count] - 生成随机数
+• /ICP备案查询 [domain] - 查询域名ICP备案
+• /IP信息查询 [ip] - 查询IP地理位置
+• /一言 - 获取一句优美的话
+
 【气象预警订阅】
 • /订阅预警 [省份] - 订阅某省气象预警
 • /取消订阅预警 [省份] - 取消订阅某省预警
@@ -162,6 +191,7 @@ def get_help_message():
 
 【系统命令】
 • /bydbottest - 运行测试命令
+• /broadcast 或 /群发 - 进入广播模式（仅主人）
 
 【数据源说明】
 • 当前支持30+个地震数据源
@@ -171,7 +201,7 @@ def get_help_message():
 注：[...]表示必填参数，(...)表示选填参数
 更多帮助请查看具体命令后加-h或-help
 """
-    return help_text
+        return help_text
 
 
 def handle_signal(signum, frame):
@@ -220,6 +250,8 @@ async def main():
     if CMA_WEATHER_SUBSCRIBER_AVAILABLE:
         from cma_weather_subscriber import init_cma_weather_subscriber
         await init_cma_weather_subscriber(config)
+
+
 
     # 启动 FAN WS 真实数据推送
     fan_ws_task = asyncio.create_task(connect_to_fan_ws(config))

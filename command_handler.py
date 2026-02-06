@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from typing import Dict, Any, Tuple, List, Optional
+from help_message import get_help_message
 from message_sender import send_group_msg, send_group_img
 from draw_eq import draw_earthquake_async
 from ws_handler import process_message  # 复用处理逻辑
@@ -26,6 +27,14 @@ try:
 except ImportError as e:
     logging.warning(f"CMA气象预警订阅模块导入失败: {e}")
     CMA_WEATHER_SUBSCRIBER_AVAILABLE = False
+
+# 导入UAPI模块
+try:
+    from uapi_handler import handle_uapi_command
+    UAPI_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"UAPI模块导入失败: {e}")
+    UAPI_AVAILABLE = False
 
 # 导入全局变量
 import sys
@@ -625,36 +634,91 @@ async def handle_subscribe_warning(args: list, group_id: str, user_id: str, conf
         return
 
     if not args:
-        await send_group_msg(group_id, "请指定要订阅的省份，例如：订阅预警 广东")
+        await send_group_msg(group_id, "请提供要订阅的地区名称，格式为：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）\n示例: 订阅预警 上海市上海市崇明区 或 订阅预警 广东省惠州市惠城区")
         return
 
-    province = args[0]
-    
-    # 验证省份名称
-    valid_provinces = [
-        "北京", "天津", "上海", "重庆",
-        "河北", "山西", "辽宁", "吉林", "黑龙江",
-        "江苏", "浙江", "安徽", "福建", "江西", "山东",
-        "河南", "湖北", "湖南", "广东", "海南",
-        "四川", "贵州", "云南", "陕西", "甘肃", "青海",
-        "内蒙古", "广西", "西藏", "宁夏", "新疆",
-        "香港", "澳门", "台湾"
-    ]
-    
-    if province not in valid_provinces:
-        await send_group_msg(group_id, f"无效的省份名称：{province}\n支持的省份：{', '.join(valid_provinces[:10])}等")
+    location = args[0].strip()
+    if not location:
+        await send_group_msg(group_id, "请输入有效的地区名称，格式为：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）")
         return
+
+    # 解析地区名称，格式为：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）
+    # 例如：上海市上海市崇明区 或 广东省惠州市惠城区
+    # 按照字符长度和结构进行解析
+    import re
+    
+    # 使用正则表达式匹配格式：省名+市名+[区/县名]
+    pattern = r'^([^(（]*?)(?:省|市)([^(（]*?)(?:市|自治州|盟)([^区县]*?)(?:区|县|旗)?)?$'
+    match = re.match(pattern, location)
+    
+    if not match:
+        # 如果没有匹配，尝试更简单的模式
+        # 检查是否包含至少两个"市"或类似的分隔符
+        # 按照省市区的结构进行分割
+        parts = []
+        # 先按省市区进行分割
+        temp_location = location
+        
+        # 查找省的位置
+        prov_end = -1
+        for prov_suffix in ['省', '市']:
+            prov_pos = temp_location.find(prov_suffix)
+            if prov_pos != -1:
+                prov_end = prov_pos + len(prov_suffix)
+                break
+        
+        if prov_end == -1:
+            await send_group_msg(group_id, "地区名称格式错误，请使用：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）\n示例: 订阅预警 上海市上海市崇明区 或 订阅预警 广东省惠州市惠城区")
+            return
+            
+        province_part = temp_location[:prov_end]
+        remaining = temp_location[prov_end:]
+        
+        # 查找市的位置
+        city_end = -1
+        for city_suffix in ['市', '自治州', '盟']:
+            city_pos = remaining.find(city_suffix)
+            if city_pos != -1:
+                city_end = city_pos + len(city_suffix)
+                break
+                
+        if city_end == -1:
+            await send_group_msg(group_id, "地区名称格式错误，请使用：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）\n示例: 订阅预警 上海市上海市崇明区 或 订阅预警 广东省惠州市惠城区")
+            return
+            
+        city_part = remaining[:city_end]
+        county_part = remaining[city_end:]
+        
+        # 提取纯名称（去掉后缀）
+        province = province_part.replace('省', '').replace('市', '')
+        city = city_part.replace('市', '').replace('自治州', '').replace('盟', '')
+        county = county_part.replace('区', '').replace('县', '').replace('旗', '')
+        
+        # 构造完整地区路径
+        full_location = f"{province}{city}"
+        if county:
+            full_location += f"{county}"
+    else:
+        # 使用正则表达式匹配的结果
+        province = match.group(1)
+        city = match.group(2)
+        county = match.group(3) if match.group(3) else ""
+        
+        # 构造完整地区路径
+        full_location = f"{province}{city}"
+        if county:
+            full_location += f"{county}"
 
     subscriber = get_subscriber()
     if not subscriber:
         await send_group_msg(group_id, "订阅服务未初始化")
         return
 
-    success = await subscriber.subscribe_province(province, group_id, user_id)
+    success = await subscriber.subscribe_location(full_location, group_id, user_id)
     if success:
-        await send_group_msg(group_id, f"成功订阅 {province} 的气象预警！当该地区发布气象预警时，将会在此群通知您。")
+        await send_group_msg(group_id, f"成功订阅 {location} 的气象预警！当该地区发布气象预警时，将会在此群通知您。")
     else:
-        await send_group_msg(group_id, f"订阅 {province} 的气象预警失败，请重试。")
+        await send_group_msg(group_id, f"订阅 {location} 的气象预警失败，请重试。")
 
 
 async def handle_unsubscribe_warning(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
@@ -664,36 +728,50 @@ async def handle_unsubscribe_warning(args: list, group_id: str, user_id: str, co
         return
 
     if not args:
-        await send_group_msg(group_id, "请指定要取消订阅的省份，例如：取消订阅预警 广东")
+        await send_group_msg(group_id, "请指定要取消订阅的地区，例如：取消订阅预警 广东 或 取消订阅预警 广东深圳南山")
         return
 
-    province = args[0]
+    location = args[0]
     
-    # 验证省份名称
-    valid_provinces = [
-        "北京", "天津", "上海", "重庆",
-        "河北", "山西", "辽宁", "吉林", "黑龙江",
-        "江苏", "浙江", "安徽", "福建", "江西", "山东",
-        "河南", "湖北", "湖南", "广东", "海南",
-        "四川", "贵州", "云南", "陕西", "甘肃", "青海",
-        "内蒙古", "广西", "西藏", "宁夏", "新疆",
-        "香港", "澳门", "台湾"
-    ]
-    
-    if province not in valid_provinces:
-        await send_group_msg(group_id, f"无效的省份名称：{province}")
-        return
+    # 判断是传统省份格式还是新的省市区格式
+    if len(location) >= 4:  # 可能是新的省市区格式
+        # 尝试取消地区订阅
+        subscriber = get_subscriber()
+        if not subscriber:
+            await send_group_msg(group_id, "订阅服务未初始化")
+            return
 
-    subscriber = get_subscriber()
-    if not subscriber:
-        await send_group_msg(group_id, "订阅服务未初始化")
-        return
-
-    success = await subscriber.unsubscribe_province(province, group_id, user_id)
-    if success:
-        await send_group_msg(group_id, f"已取消订阅 {province} 的气象预警。")
+        success = await subscriber.unsubscribe_location(location, group_id, user_id)
+        if success:
+            await send_group_msg(group_id, f"已取消订阅 {location} 的气象预警。")
+        else:
+            await send_group_msg(group_id, f"取消订阅 {location} 的气象预警失败，请重试。")
     else:
-        await send_group_msg(group_id, f"取消订阅 {province} 的气象预警失败，请重试。")
+        # 验证省份名称（传统格式）
+        valid_provinces = [
+            "北京", "天津", "上海", "重庆",
+            "河北", "山西", "辽宁", "吉林", "黑龙江",
+            "江苏", "浙江", "安徽", "福建", "江西", "山东",
+            "河南", "湖北", "湖南", "广东", "海南",
+            "四川", "贵州", "云南", "陕西", "甘肃", "青海",
+            "内蒙古", "广西", "西藏", "宁夏", "新疆",
+            "香港", "澳门", "台湾"
+        ]
+        
+        if location not in valid_provinces:
+            await send_group_msg(group_id, f"无效的省份名称：{location}")
+            return
+
+        subscriber = get_subscriber()
+        if not subscriber:
+            await send_group_msg(group_id, "订阅服务未初始化")
+            return
+
+        success = await subscriber.unsubscribe_province(location, group_id, user_id)
+        if success:
+            await send_group_msg(group_id, f"已取消订阅 {location} 的气象预警。")
+        else:
+            await send_group_msg(group_id, f"取消订阅 {location} 的气象预警失败，请重试。")
 
 
 async def handle_my_subscriptions(user_id: str, group_id: str) -> None:
@@ -728,9 +806,74 @@ async def handle_my_subscriptions(user_id: str, group_id: str) -> None:
         await send_group_msg(group_id, "您在当前群聊中没有订阅任何地区的气象预警。")
 
 
+async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
+    """
+    检查是否为UAPI命令（使用空格分隔参数）
+    :param raw_message: 原始消息
+    :return: (是否为UAPI命令, 命令名称, 参数列表)
+    """
+    if not UAPI_AVAILABLE:
+        return False, "", []
+
+    msg_parts = raw_message.strip().split()
+    if not msg_parts:
+        return False, "", []
+
+    command_name = msg_parts[0].strip()
+    args = [arg.strip() for arg in msg_parts[1:]] if len(msg_parts) > 1 else []
+
+    # 支持的UAPI命令列表
+    supported_commands = [
+        # 社交类 API
+        "B站直播间查询", "B站用户查询", "B站投稿查询", "GitHub仓库查询",
+        
+        # 杂项类 API
+        "热榜查询", "世界时间查询", "天气查询", "手机归属地查询", "随机数生成",
+        "程序员历史上的今天", "程序员历史事件",
+        
+        # 网络类 API
+        "ICP备案查询", "IP信息查询", "WHOIS查询", "Ping主机", "DNS查询", 
+        "URL可访问性", "端口扫描",
+        
+        # 游戏类 API
+        "MC服务器查询", "Steam用户查询", "Epic免费游戏", "MC玩家查询", "MC曾用名查询",
+        
+        # 文本类 API
+        "文本分析", "MD5哈希", "MD5校验", "Base64编码", "Base64解码", 
+        "AES加密", "AES解密", "AES高级加密", "AES高级解密", "格式转换",
+        
+        # 随机类 API
+        "随机图片", "答案之书", "随机字符串",
+        
+        # 图像类 API
+        "必应壁纸", "上传图片", "图片转Base64", "生成二维码", "GrAvatar头像", 
+        "摸摸头", "生成摸摸头GIF POST", "无损压缩图片", "生成你们怎么不说话了表情包", "SVG转图片",
+        
+        # 翻译类 API
+        "翻译",
+        
+        # 诗词类 API
+        "一言",
+        
+        # 网页解析类 API
+        "网页元数据提取", "网页图片提取",
+        
+        # 转换类 API
+        "时间戳转换", "JSON格式化",
+        
+        # 日常类 API
+        "每日新闻图"
+    ]
+
+    if command_name in supported_commands:
+        return True, command_name, args
+
+    return False, "", []
+
+
 async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
     """
-    处理命令（包括测试命令、帮助命令、广播命令和天气命令）
+    处理命令（包括测试命令、帮助命令、广播命令、天气命令和UAPI命令）
     :param event: 事件数据
     :param config: 配置
     """
@@ -782,14 +925,44 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
     # 检查是否为帮助命令
     if is_help_command_event(event, config):
         logging.info(f"收到帮助命令来自群 {group_id}")
-        # 发送帮助图片
-        help_image_path = os.path.join(os.path.dirname(__file__), 'help命令.png')
-        if os.path.exists(help_image_path):
-            success = await send_group_img(group_id, help_image_path)
-            if not success:
-                await send_group_msg(group_id, "帮助图片发送失败，请确认图片文件存在")
-        else:
-            await send_group_msg(group_id, "帮助图片不存在，请联系管理员")
+        
+        # 获取help配置
+        help_config = config.get("help", {})
+        help_image_enabled = help_config.get("image_enabled", True)
+        help_text_enabled = help_config.get("text_enabled", False)
+        
+        # 如果两个都为false，则停用help命令
+        if not help_image_enabled and not help_text_enabled:
+            return  # 停用help命令
+        
+        # 如果text_enabled为true，则发送文字帮助
+        if help_text_enabled and not help_image_enabled:
+            help_text = get_help_message()
+            await send_group_msg(group_id, help_text)
+            return
+        
+        # 如果image_enabled为true，则发送帮助图片
+        if help_image_enabled:
+            # 获取图片路径列表
+            image_paths = help_config.get("image_paths", ["help命令.png"])
+            sent_any = False
+            
+            for image_path in image_paths:
+                # 如果路径不是绝对路径，则相对于主程序目录
+                if not os.path.isabs(image_path):
+                    image_path = os.path.join(os.path.dirname(__file__), image_path)
+                
+                if os.path.exists(image_path):
+                    success = await send_group_img(group_id, image_path)
+                    if success:
+                        sent_any = True
+                    else:
+                        logging.warning(f"帮助图片发送失败: {image_path}")
+                else:
+                    logging.warning(f"帮助图片文件不存在: {image_path}")
+            
+            if not sent_any:
+                await send_group_msg(group_id, "帮助图片发送失败，请联系管理员")
         return
 
     # 检查是否为测试命令
@@ -827,6 +1000,69 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
         await handle_weather_command(command_name, args, group_id, config, user_id)
     else:
         logging.debug(f"不是有效的天气命令: {raw_message}")
+
+        # 检查是否为UAPI命令
+        is_uapi, uapi_command_name, uapi_args = await is_uapi_command(raw_message)
+
+        if is_uapi:
+            logging.debug(f"识别为UAPI命令: {uapi_command_name}, 参数: {uapi_args}")
+            # 检查是否只在配置的群组中响应命令
+            if config.get("test_groups_only", True) and group_id not in config.get("groups", {}):
+                logging.debug(f"群 {group_id} 不在配置的群组列表中，忽略UAPI命令")
+                return
+
+            # 获取用户ID用于统计
+            user_id = str(event.get("user_id", ""))
+
+            logging.info(f"收到UAPI命令 {raw_message} 来自群 {group_id} 用户 {user_id}")
+            try:
+                # 修改处理逻辑以支持图片和其他类型的数据
+                result = await handle_uapi_command(uapi_command_name, uapi_args, group_id, config, user_id)
+                
+                # 检查返回结果的类型
+                if isinstance(result, tuple):
+                    # 如果返回的是元组，第一个元素是消息类型，第二个是数据
+                    msg_type, data = result
+                    if msg_type == 'image' and data:
+                        # 发送图片
+                        import tempfile
+                        import os
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                            tmp_file.write(data)
+                            tmp_file_path = tmp_file.name
+                        
+                        success = await send_group_img(group_id, tmp_file_path)
+                        os.unlink(tmp_file_path)  # 删除临时文件
+                        
+                        if not success:
+                            await send_group_msg(group_id, f"发送{uapi_command_name}图片失败")
+                    elif msg_type == 'text' and data:
+                        await send_group_msg(group_id, data)
+                    else:
+                        await send_group_msg(group_id, f"UAPI命令 {uapi_command_name} 执行失败或无返回结果")
+                elif isinstance(result, bytes):
+                    # 如果返回的是字节数据（图片），保存到临时文件并发送
+                    import tempfile
+                    import os
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                        tmp_file.write(result)
+                        tmp_file_path = tmp_file.name
+                    
+                    success = await send_group_img(group_id, tmp_file_path)
+                    os.unlink(tmp_file_path)  # 删除临时文件
+                    
+                    if not success:
+                        await send_group_msg(group_id, f"发送{uapi_command_name}图片失败")
+                elif result:
+                    # 如果返回的是字符串，直接发送
+                    await send_group_msg(group_id, result)
+                else:
+                    await send_group_msg(group_id, f"UAPI命令 {uapi_command_name} 执行失败或无返回结果")
+            except Exception as e:
+                logging.error(f"处理UAPI命令异常: {e}")
+                await send_group_msg(group_id, f"UAPI命令处理出错: {str(e)}")
+        else:
+            logging.debug(f"不是有效的UAPI命令: {raw_message}")
 
 
 async def broadcast_message_to_all_groups(message: str, config: Dict[str, Any], source_group: str, sender_user: str) -> None:

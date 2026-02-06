@@ -184,6 +184,14 @@
     "cache_ttl": 600
   },
 
+  "uapi": {
+    "base_url": "https://uapis.cn",
+    "api_key": "",
+    "timeout": 30,
+    "cache_enabled": true,
+    "cache_ttl": 600
+  },
+
   "weather_commands": {
     "城市搜索": "/geo/v2/city/lookup",
     "热门城市查询": "/geo/v2/city/top",
@@ -258,5 +266,11 @@
 
   "field_rules": {
 
+  },
+
+  "help": {
+    "image_enabled": true,
+    "image_paths": ["help命令.png"],
+    "text_enabled": false
   }
 }

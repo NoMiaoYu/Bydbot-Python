@@ -47,21 +47,26 @@ async def send_group_msg(group_id: str, text: str) -> bool:
         return False
 
     try:
-        payload = {
-            "group_id": int(group_id),
-            "message": text
-        }
-        
-        async with SESSION.post('/send_group_msg', json=payload, headers=HEADERS) as resp:
-            response_text = await resp.text()
-            
-            if resp.status == 200:
-                logging.info(f"发送文本到群 {group_id}: {text[:50]}...")  # 只记录前50个字符
-                return True
-            else:
-                logging.error(f"发送失败，状态码 {resp.status}: {response_text}")
-                return False
-                
+        # 检查消息长度，如果超过250字符则使用合并转发
+        if len(text) > 250:
+            # 发送合并转发消息
+            return await send_forward_msg(group_id, text)
+        else:
+            payload = {
+                "group_id": int(group_id),
+                "message": text
+            }
+
+            async with SESSION.post('/send_group_msg', json=payload, headers=HEADERS) as resp:
+                response_text = await resp.text()
+
+                if resp.status == 200:
+                    logging.info(f"发送文本到群 {group_id}: {text[:50]}...")  # 只记录前50个字符
+                    return True
+                else:
+                    logging.error(f"发送失败，状态码 {resp.status}: {response_text}")
+                    return False
+
     except ValueError as e:
         logging.error(f"群号格式错误: {e}")
         return False
@@ -70,6 +75,75 @@ async def send_group_msg(group_id: str, text: str) -> bool:
         return False
     except Exception as e:
         logging.error(f"发送文本消息时发生未知错误: {e}")
+        return False
+
+
+async def send_forward_msg(group_id: str, text: str) -> bool:
+    """
+    发送合并转发消息到QQ群（用于长消息）
+    :param group_id: 群号
+    :param text: 消息文本
+    :return: 发送是否成功
+    """
+    global SESSION, HEADERS
+    if not SESSION:
+        logging.error("消息发送器未初始化")
+        return False
+
+    try:
+        # 准备合并转发消息节点，将整个文本作为一个节点
+        forward_nodes = [{
+            "type": "node",
+            "data": {
+                "name": "Bydbot",
+                "uin": "1000000",  # 使用机器人QQ号或默认值
+                "content": text  # 整个文本内容作为一个节点
+            }
+        }]
+
+        # 尝试使用合并转发API
+        payload = {
+            "group_id": int(group_id),
+            "messages": forward_nodes
+        }
+
+        # 首先尝试使用 send_group_forward_msg API
+        try:
+            async with SESSION.post('/send_group_forward_msg', json=payload, headers=HEADERS) as resp:
+                response_text = await resp.text()
+
+                if resp.status == 200:
+                    logging.info(f"发送合并转发消息到群 {group_id}，消息长度: {len(text)} 字符")
+                    return True
+                else:
+                    logging.warning(f"合并转发API失败，状态码 {resp.status}: {response_text}")
+        except Exception as api_error:
+            logging.warning(f"合并转发API调用失败: {api_error}")
+
+        # 如果合并转发API不可用，直接发送原始文本（虽然超过了长度限制）
+        # 这里我们尝试直接发送，让底层API处理
+        payload_fallback = {
+            "group_id": int(group_id),
+            "message": text
+        }
+        
+        async with SESSION.post('/send_group_msg', json=payload_fallback, headers=HEADERS) as fallback_resp:
+            if fallback_resp.status == 200:
+                logging.info(f"使用普通消息方式发送长消息到群 {group_id}，消息长度: {len(text)} 字符")
+                return True
+            else:
+                fallback_response_text = await fallback_resp.text()
+                logging.error(f"发送长消息失败，状态码 {fallback_resp.status}: {fallback_response_text}")
+                return False
+
+    except ValueError as e:
+        logging.error(f"群号格式错误: {e}")
+        return False
+    except aiohttp.ClientError as e:
+        logging.error(f"HTTP客户端错误: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"发送合并转发消息时发生未知错误: {e}")
         return False
 
 

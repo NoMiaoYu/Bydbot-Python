@@ -16,14 +16,15 @@ import requests
 from bs4 import BeautifulSoup
 
 from message_sender import send_group_msg
-from Docs.气象预警.weather_alarm_client import CMWeatherAlarmClient
+from weather_alarm_client import CMWeatherAlarmClient
 
 
 class CMAWeatherSubscriber:
     def __init__(self, config: Dict):
         self.config = config
         self.client = CMWeatherAlarmClient()
-        self.subscribers = {}  # {province: [(group_id, user_id), ...]}
+        self.subscribers = {}  # {location: [(group_id, user_id), ...]}  # 支持省市级别订阅
+        self.location_subscribers = {}  # {full_location: [(group_id, user_id), ...]}  # 新增：支持省市区三级格式订阅
         self.last_checked_time = 0
         self.check_interval = 7 * 60  # 7分钟检查一次
         self.last_processed_alarms = set()  # 已处理的预警ID集合
@@ -32,18 +33,20 @@ class CMAWeatherSubscriber:
     async def init_db(self):
         """初始化订阅相关的数据库表"""
         async with aiosqlite.connect(self.db_path) as db:
-            # 创建订阅表
+            # 创建订阅表 - 添加新的列以支持省市区格式
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS weather_subscriptions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     province TEXT NOT NULL,
                     group_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,
+                    location_type TEXT DEFAULT 'province',  -- 'province' 或 'location' 表示不同格式
+                    full_location TEXT DEFAULT '',  -- 存储完整的省市区格式
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(province, group_id, user_id)
+                    UNIQUE(province, group_id, user_id, location_type)
                 )
             ''')
-            
+
             # 创建已处理预警表
             await db.execute('''
                 CREATE TABLE IF NOT EXISTS processed_weather_alarms (
@@ -53,24 +56,51 @@ class CMAWeatherSubscriber:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
+
             await db.commit()
-            
+
         logging.info("CMA气象预警订阅数据库初始化完成")
         
     async def load_subscriptions(self):
         """从数据库加载订阅信息"""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT province, group_id, user_id FROM weather_subscriptions") as cursor:
-                rows = await cursor.fetchall()
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # 检查表是否存在
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='weather_subscriptions'")
+                table_exists = await cursor.fetchone()
+                if not table_exists:
+                    logging.info("气象预警订阅表不存在，创建新表")
+                    await self.init_db()
+                else:
+                    # 检查表结构，如果缺少新列则添加
+                    cursor = await db.execute("PRAGMA table_info(weather_subscriptions)")
+                    columns = await cursor.fetchall()
+                    column_names = [col[1] for col in columns]
+                    
+                    # 检查是否缺少location_type列
+                    if 'location_type' not in column_names:
+                        logging.info("检测到旧版本数据库，正在更新表结构...")
+                        await db.execute("ALTER TABLE weather_subscriptions ADD COLUMN location_type TEXT DEFAULT 'province'")
+                    
+                    # 检查是否缺少full_location列
+                    if 'full_location' not in column_names:
+                        await db.execute("ALTER TABLE weather_subscriptions ADD COLUMN full_location TEXT DEFAULT ''")
+                    
+                    await db.commit()
                 
-        self.subscribers = {}
-        for province, group_id, user_id in rows:
-            if province not in self.subscribers:
-                self.subscribers[province] = []
-            self.subscribers[province].append((group_id, user_id))
-            
-        logging.info(f"加载了 {sum(len(v) for v in self.subscribers.values())} 个订阅")
+                # 加载订阅数据
+                async with db.execute("SELECT province, group_id, user_id, location_type, full_location FROM weather_subscriptions") as cursor:
+                    rows = await cursor.fetchall()
+                    for row in rows:
+                        province, group_id, user_id, location_type, full_location = row
+                        # 使用完整的省市区路径作为键
+                        location_key = full_location if location_type == 'location' and full_location else province
+                        if location_key not in self.subscribers:
+                            self.subscribers[location_key] = []
+                        self.subscribers[location_key].append((group_id, user_id))
+                    logging.info(f"加载了 {len(rows)} 条气象预警订阅记录")
+        except Exception as e:
+            logging.error(f"加载气象预警订阅记录失败: {e}")
         
     async def subscribe_province(self, province: str, group_id: str, user_id: str) -> bool:
         """订阅特定省份的气象预警"""
@@ -93,6 +123,62 @@ class CMAWeatherSubscriber:
             
         except Exception as e:
             logging.error(f"订阅失败: {e}")
+            return False
+            
+    async def subscribe_location(self, full_location: str, group_id: str, user_id: str) -> bool:
+        """订阅特定地区的气象预警（支持省市区格式）"""
+        try:
+            # 解析完整地区名称
+            # 假设格式为 "省份+城市+区县" 如 "广东深圳南山"
+            province = full_location[:2] if len(full_location) >= 2 else full_location
+            city = full_location[2:4] if len(full_location) >= 4 else ""
+            district = full_location[4:] if len(full_location) > 4 else ""
+            
+            # 使用省份作为主要匹配字段，但存储完整路径
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT OR IGNORE INTO weather_subscriptions (province, group_id, user_id, location_type, full_location) VALUES (?, ?, ?, 'location', ?)",
+                    (province, group_id, user_id, full_location)
+                )
+                await db.commit()
+                
+            # 更新内存中的订阅信息
+            if full_location not in self.location_subscribers:
+                self.location_subscribers[full_location] = []
+            if (group_id, user_id) not in self.location_subscribers[full_location]:
+                self.location_subscribers[full_location].append((group_id, user_id))
+                
+            logging.info(f"用户 {user_id} 在群 {group_id} 订阅了 {full_location} 的气象预警")
+            return True
+            
+        except Exception as e:
+            logging.error(f"地区订阅失败: {e}")
+            return False
+            
+    async def unsubscribe_location(self, full_location: str, group_id: str, user_id: str) -> bool:
+        """取消订阅特定地区的气象预警（支持省市区格式）"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "DELETE FROM weather_subscriptions WHERE full_location=? AND group_id=? AND user_id=? AND location_type='location'",
+                    (full_location, group_id, user_id)
+                )
+                await db.commit()
+                
+            # 更新内存中的订阅信息
+            if full_location in self.location_subscribers:
+                self.location_subscribers[full_location] = [
+                    (g, u) for g, u in self.location_subscribers[full_location] 
+                    if not (g == group_id and u == user_id)
+                ]
+                if not self.location_subscribers[full_location]:
+                    del self.location_subscribers[full_location]
+                    
+            logging.info(f"用户 {user_id} 在群 {group_id} 取消订阅了 {full_location} 的气象预警")
+            return True
+            
+        except Exception as e:
+            logging.error(f"取消地区订阅失败: {e}")
             return False
             
     async def unsubscribe_province(self, province: str, group_id: str, user_id: str) -> bool:
