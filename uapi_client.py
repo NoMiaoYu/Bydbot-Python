@@ -9,6 +9,7 @@ import logging
 from typing import Dict, Any, Optional
 import asyncio
 from datetime import datetime, timedelta
+from aiohttp import FormData
 
 
 class UApiClient:
@@ -577,48 +578,74 @@ class UApiClient:
         params = {'qq': qq, 'bg_color': bg_color}
         
         try:
-            import urllib.parse
             url = f"{self.base_url}/api/v1/image/motou"
-            query_string = urllib.parse.urlencode(params)
-            url = f"{url}?{query_string}"
-            
+            if params:
+                import urllib.parse
+                query_string = urllib.parse.urlencode(params)
+                url = f"{url}?{query_string}"
+                
             headers = self._get_headers()
             
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
                 async with session.get(url, headers=headers) as response:
-                    # 检查响应内容长度，防止响应过大
-                    content_length = response.headers.get('Content-Length')
-                    if content_length:
-                        size_mb = int(content_length) / (1024 * 1024)
-                        if size_mb > 10:  # 限制10MB
-                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
-                            return None
-                    
                     if response.status == 200:
-                        # 读取响应内容，但限制大小
-                        content = await response.read()
-                        size_mb = len(content) / (1024 * 1024)
-                        if size_mb > 10:  # 限制10MB
-                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
+                        content_type = response.headers.get('Content-Type', '')
+                        if 'image' in content_type:
+                            return await response.read()
+                        else:
+                            # 如果不是图片，尝试解析JSON错误
+                            try:
+                                error_data = await response.json()
+                                logging.error(f"摸摸头GIF生成失败: {error_data}")
+                            except:
+                                error_text = await response.text()
+                                logging.error(f"摸摸头GIF生成失败: {error_text[:200]}...")
                             return None
-                        
-                        return content  # 返回二进制图片数据
                     else:
                         error_text = await response.text()
-                        logging.error(f"UAPI摸摸头GIF请求失败 {url}: {response.status} - {error_text}")
+                        logging.error(f"摸摸头GIF生成失败，状态码: {response.status}, 错误: {error_text[:200]}...")
                         return None
         except Exception as e:
-            logging.error(f"UAPI摸摸头GIF请求异常: {e}")
+            logging.error(f"摸摸头GIF生成异常: {e}")
+            return None
+
+    async def get_image_bing_daily(self) -> Optional[bytes]:
+        """必应壁纸"""
+        try:
+            url = f"{self.base_url}/api/v1/image/bing-daily"
+            headers = self._get_headers()
+            
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        content_type = response.headers.get('Content-Type', '')
+                        if 'image' in content_type:
+                            return await response.read()
+                        else:
+                            # 如果不是图片，尝试解析JSON错误
+                            try:
+                                error_data = await response.json()
+                                logging.error(f"必应壁纸获取失败: {error_data}")
+                            except:
+                                error_text = await response.text()
+                                logging.error(f"必应壁纸获取失败: {error_text[:200]}...")
+                            return None
+                    else:
+                        error_text = await response.text()
+                        logging.error(f"必应壁纸获取失败，状态码: {response.status}, 错误: {error_text[:200]}...")
+                        return None
+        except Exception as e:
+            logging.error(f"必应壁纸获取异常: {e}")
             return None
 
     async def post_image_motou(self, image_url: str = None, bg_color: str = "transparent") -> Optional[bytes]:
         """生成摸摸头GIF (POST版本，通过图片URL)"""
         try:
-            import aiohttp
-            from aiohttp import FormData
-
             url = f"{self.base_url}/api/v1/image/motou"
             headers = self._get_headers()
+
+            # 创建表单数据
+            form_data = FormData()
 
             # 创建表单数据
             form_data = FormData()
@@ -727,9 +754,6 @@ class UApiClient:
     async def post_image_compress(self, file_path: str, level: int = 3, format_param: str = "png") -> Optional[bytes]:
         """无损压缩图片"""
         try:
-            import aiohttp
-            from aiohttp import FormData
-            
             url = f"{self.base_url}/api/v1/image/compress"
             headers = self._get_headers()
             
@@ -780,9 +804,6 @@ class UApiClient:
                              height: int = None, quality: int = 90) -> Optional[bytes]:
         """SVG转图片"""
         try:
-            import aiohttp
-            from aiohttp import FormData
-            
             url = f"{self.base_url}/api/v1/image/svg"
             headers = self._get_headers()
             

@@ -333,42 +333,46 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
                 # 检查是否包含预期的视频数据
                 if 'videos' in data:
                     total = data.get('total', 0)
-                    page = data.get('page', 'N/A')
-                    size = data.get('size', 'N/A')
-                    mid = data.get('mid', 'N/A')
-                    name = data.get('name', 'N/A')
-                    videos = data['videos'][:5]  # 只显示前5个视频
+                    page = data.get('page', 1)
+                    size = data.get('size', 20)
+                    videos = data['videos'][:10]  # 只显示前10个视频
 
                     video_list = []
                     for video in videos:
-                        aid = video.get('aid', 'N/A')
-                        bvid = video.get('bvid', 'N/A')
                         title = video.get('title', 'N/A')
-                        cover = video.get('cover', 'N/A')
+                        bvid = video.get('bvid', 'N/A')
                         duration = video.get('duration', 0)
-                        play_count = f"{video.get('play_count', 0):,}"
-                        danmaku_count = f"{video.get('danmaku', 0):,}"
-                        comment_count = f"{video.get('comment', 0):,}"
-                        like_count = f"{video.get('like', 0):,}"
-                        coin_count = f"{video.get('coin', 0):,}"
-                        share_count = f"{video.get('share', 0):,}"
-                        favorite_count = f"{video.get('favorite', 0):,}"
-                        publish_time = video.get('publish_time', 'N/A')
-                        pubdate = video.get('pubdate', 'N/A')
-                        description = video.get('description', 'N/A')[:50]  # 限制描述长度
-                        tag = video.get('tag', 'N/A')
-                        typename = video.get('typename', 'N/A')
-                        copyright = video.get('copyright', 'N/A')
-                        pic = video.get('pic', 'N/A')
+                        play_count = video.get('play_count', 0)
                         
+                        # 格式化时长
                         mins = duration // 60
                         secs = duration % 60
                         duration_str = f"{mins}:{secs:02d}"
-
-                        video_list.append(f"- {title} (BV: {bvid})\n  播放:{play_count}, 弹幕:{danmaku_count}, 时长:{duration_str}\n  发布时间: {pubdate}\n  类型: {typename}, 标签: {tag}")
+                        
+                        # 格式化播放量
+                        if play_count >= 10000:
+                            play_str = f"{play_count//10000}万"
+                        elif play_count >= 1000:
+                            play_str = f"{play_count//1000}千"
+                        else:
+                            play_str = str(play_count)
+                        
+                        # 处理发布时间
+                        publish_time = video.get('publish_time', 0)
+                        if publish_time > 0:
+                            import time
+                            try:
+                                publish_date = time.strftime("%Y-%m-%d %H:%M", time.localtime(publish_time))
+                                time_str = publish_date
+                            except (ValueError, OSError):
+                                time_str = "未知时间"
+                        else:
+                            time_str = "未知时间"
+                        
+                        video_list.append(f"- {title} (BV: {bvid})\n  播放:{play_str} | 时长:{duration_str} | {time_str}")
 
                     video_str = "\n".join(video_list)
-                    return f"[B站投稿查询]\nUP主: {name} (UID: {mid})\n总计稿件: {total}\n当前页: {page}/{size}\n最近投稿:\n{video_str}"
+                    return f"[B站投稿查询]\n总计稿件: {total}\n当前页: {page}/{size}\n最近投稿:\n{video_str}"
                 else:
                     # 没有找到videos字段，检查是否是错误信息
                     if 'message' in data:
@@ -385,8 +389,6 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
                 return "未找到仓库信息"
 
             full_name = data.get('full_name', data.get('name', 'N/A'))
-            name = data.get('name', data.get('full_name', 'N/A'))
-            owner_login = data.get('owner', {}).get('login', data.get('owner', {}).get('login', 'N/A')) if data.get('owner') or data.get('owner') else 'N/A'
             description = data.get('description', 'N/A')
             language = data.get('language', 'N/A')
             languages = data.get('languages', {})
@@ -394,8 +396,6 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             forks = data.get('forks', data.get('forks_count', 0))
             open_issues = data.get('open_issues', data.get('open_issues_count', 0))
             watchers = data.get('watchers', data.get('watchers_count', 0))
-            subscribers = data.get('subscribers', 'N/A')
-            size = data.get('size', 'N/A')
             default_branch = data.get('default_branch', 'N/A')
             primary_branch = data.get('primary_branch', 'N/A')
             license_info = data.get('license', data.get('license', 'N/A'))
@@ -404,74 +404,410 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             pushed_at = data.get('pushed_at', 'N/A')
             homepage = data.get('homepage', 'N/A')
             topics = data.get('topics', [])
-            topics_str = ', '.join(topics[:10]) if topics else 'N/A'  # 只显示前10个话题
-            visibility = data.get('visibility', 'N/A')
-            archived = data.get('archived', 'N/A')
-            disabled = data.get('disabled', 'N/A')
-            fork = data.get('fork', 'N/A')
-            has_issues = data.get('has_issues', 'N/A')
-            has_projects = data.get('has_projects', 'N/A')
-            has_wiki = data.get('has_wiki', 'N/A')
-            has_pages = data.get('has_pages', 'N/A')
-            has_downloads = data.get('has_downloads', 'N/A')
-            has_discussions = data.get('has_discussions', 'N/A')
-            clone_url = data.get('clone_url', 'N/A')
-            ssh_url = data.get('ssh_url', 'N/A')
-            git_url = data.get('git_url', 'N/A')
-            html_url = data.get('html_url', 'N/A')
-            collaborators = data.get('collaborators', [])
-            maintainer_count = len(collaborators) if collaborators else 0
+            topics_str = ', '.join(topics[:10]) if topics else 'N/A'
+            
+            # 可见性处理
+            visibility_raw = data.get('visibility', 'N/A')
+            if visibility_raw == 'public':
+                visibility = '公开'
+            elif visibility_raw == 'private':
+                visibility = '隐藏'
+            else:
+                visibility = str(visibility_raw)
+            
+            # 归档状态处理
+            archived_raw = data.get('archived', 'N/A')
+            archived = '是' if archived_raw is True else '否' if archived_raw is False else str(archived_raw)
+            
+            # 禁用状态处理
+            disabled_raw = data.get('disabled', 'N/A')
+            disabled = '是' if disabled_raw is True else '否' if disabled_raw is False else str(disabled_raw)
+            
+            # Fork状态处理
+            fork_raw = data.get('fork', 'N/A')
+            fork_status = '允许' if fork_raw is True else '不允许' if fork_raw is False else str(fork_raw)
+            
+            # 语言分布格式化
+            if languages and isinstance(languages, dict):
+                # 计算总行数
+                total_lines = sum(languages.values())
+                if total_lines > 0:
+                    # 按行数降序排序，只显示前5个
+                    sorted_languages = sorted(languages.items(), key=lambda x: x[1], reverse=True)[:5]
+                    lang_items = []
+                    for lang, lines in sorted_languages:
+                        percentage = (lines / total_lines) * 100
+                        lang_items.append(f"{lang}: {percentage:.1f}%")
+                    languages_str = ', '.join(lang_items) if lang_items else 'N/A'
+                else:
+                    languages_str = 'N/A'
+            else:
+                languages_str = 'N/A'
+            
             latest_release = data.get('latest_release', {})
             release_name = latest_release.get('name', 'N/A') if latest_release else 'N/A'
             release_published_at = latest_release.get('published_at', 'N/A') if latest_release else 'N/A'
 
-            return f"[GitHub仓库查询]\n仓库: {full_name}\n所有者: {owner_login}\n名称: {name}\n描述: {description}\n主要语言: {language}\n语言分布: {str(languages)[:100]}...\n许可证: {license_info}\nStar数: {stargazers}\nFork数: {forks}\nIssue数: {open_issues}\nWatchers数: {watchers}\n订阅者数: {subscribers}\n大小: {size}KB\n默认分支: {default_branch}\n主分支: {primary_branch}\n可见性: {visibility}\n归档: {archived}\n禁用: {disabled}\nFork: {fork}\n话题: {topics_str}\n主页: {homepage}\n创建时间: {created_at}\n更新时间: {updated_at}\n最后推送: {pushed_at}\n克隆地址: {clone_url}\n协作人数: {maintainer_count}\n最新发布: {release_name} ({release_published_at})"
-
+            return f"[GitHub仓库查询]\n仓库: {full_name}\n描述: {description}\n主要语言: {language}\n语言分布: {languages_str}\n许可证: {license_info}\nStar数: {stargazers}\nFork数: {forks}\nIssue数: {open_issues}\nWatchers数: {watchers}\n默认分支: {default_branch}\n主分支: {primary_branch}\n可见性: {visibility}\n归档: {archived}\n禁用: {disabled}\nFork: {fork_status}\n话题: {topics_str}\n主页: {homepage}\n创建时间: {created_at}\n更新时间: {updated_at}\n最后推送: {pushed_at}\n最新发布: {release_name} ({release_published_at})"
         elif command_name == "热榜查询":
             if not data or 'list' not in data:
                 return "未获取到热榜数据"
 
             hot_list = data['list'][:10]  # 只显示前10条
             type_name = data.get('type', '未知')
-            subtype = data.get('subtype', 'N/A')
             update_time = data.get('update_time', 'N/A')
-            source = data.get('source', 'N/A')
-            total_count = data.get('total', len(hot_list))
 
-            hot_items = []
-            for i, item in enumerate(hot_list, 1):
-                title = item.get('title', 'N/A')
-                hot_score = item.get('hot', item.get('score', 'N/A'))
-                url = item.get('url', 'N/A')
-                note = item.get('note', '')
-                category = item.get('category', '')
-                author = item.get('author', '')
-                publish_time = item.get('publish_time', '')
-                media = item.get('media', '')
-                image = item.get('image', '')
-                summary = item.get('summary', '')[:50] + '...' if item.get('summary') else ''
+            # 根据热榜类型进行特殊格式化（参考热榜返回.txt文件中的结构）
+            if type_name == 'bilibili':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     🔥 {hot_value}")
+                    
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据bilibili数据结构）
+                    if 'owner' in extra:
+                        owner_name = extra['owner'].get('name', '')
+                        if owner_name:
+                            item_lines.append(f"     👤 {owner_name}")
+                    if 'stat' in extra:
+                        stat = extra['stat']
+                        view = stat.get('view', 0)
+                        if view:
+                            view_str = f"{view//10000}万" if view >= 10000 else str(view)
+                            item_lines.append(f"     👁️ {view_str}播放")
+                    if 'tname' in extra:
+                        item_lines.append(f"     🏷️ {extra['tname']}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[B站热榜]\n更新时间: {update_time}\n\n{hot_str}"
                 
-                item_info = f"{i:2d}. {title}"
-                if hot_score != 'N/A':
-                    item_info += f" (热度:{hot_score})"
-                if url != 'N/A':
-                    item_info += f"\n     链接: {url}"
-                if note:
-                    item_info += f"\n     备注: {note}"
-                if author:
-                    item_info += f"\n     作者: {author}"
-                if publish_time:
-                    item_info += f"\n     发布时间: {publish_time}"
-                if media:
-                    item_info += f"\n     媒体: {media}"
-                if summary:
-                    item_info += f"\n     摘要: {summary}"
+            elif type_name == 'weibo':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     🔥 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[微博热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'zhihu':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     🔥 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据zhihu数据结构）
+                    if 'desc' in extra:
+                        desc = extra['desc']
+                        if len(desc) > 60:
+                            desc = desc[:57] + "..."
+                        item_lines.append(f"     📝 {desc}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[知乎热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
 
-                hot_items.append(item_info)
+                
+            elif type_name == 'douyin':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     🔥 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据douyin数据结构）
+                    if 'hot_value' in extra:
+                        extra_hot_value = extra['hot_value']
+                        item_lines.append(f"     💡 热度: {extra_hot_value}")
+                    if 'view_count' in extra:
+                        view_count = extra['view_count']
+                        view_str = f"{view_count//10000}万" if view_count >= 10000 else str(view_count)
+                        item_lines.append(f"     👁️ {view_str}次观看")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[抖音热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'acfun':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     🔥 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据acfun数据结构）
+                    if 'info' in extra and isinstance(extra['info'], list):
+                        info_list = extra['info']
+                        for info in info_list:
+                            item_lines.append(f"     💡 {info}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[AcFun热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'kuaishou':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     🔥 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[快手热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'douban-movie':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     ⭐ 评分: {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据douban-movie数据结构）
+                    if 'info' in extra:
+                        info = extra['info']
+                        if len(info) > 60:
+                            info = info[:57] + "..."
+                        item_lines.append(f"     📖 {info}")
+                    if 'score' in extra:
+                        item_lines.append(f"     ⭐ 评分: {extra['score']}")
+                    if 'ratings_count' in extra:
+                        ratings = extra['ratings_count']
+                        ratings_str = f"{ratings//10000}万" if ratings >= 10000 else str(ratings)
+                        item_lines.append(f"     👥 {ratings_str}人评价")
+                    if 'poster' in extra:
+                        item_lines.append(f"     🖼️ 有海报")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[豆瓣电影榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'douban-group':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    item_lines.append(f"     👍 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据douban-group数据结构）
+                    if 'description' in extra:
+                        desc = extra['description']
+                        if len(desc) > 60:
+                            desc = desc[:57] + "..."
+                        item_lines.append(f"     📝 {desc}")
+                    if 'group_name' in extra:
+                        item_lines.append(f"     🏘️ {extra['group_name']}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[豆瓣小组热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'coolapk':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据coolapk数据结构）
+                    if 'author' in extra:
+                        item_lines.append(f"     👤 {extra['author']}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[酷安热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'thepaper':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[澎湃新闻热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'ithome':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[IT之家热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'ithome-xijiayi':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    # 添加额外信息（根据ithome-xijiayi数据结构）
+                    if 'description' in extra:
+                        desc = extra['description']
+                        if len(desc) > 60:
+                            desc = desc[:57] + "..."
+                        item_lines.append(f"     📝 {desc}")
+                    if 'editor' in extra:
+                        item_lines.append(f"     👨‍💼 编辑: {extra['editor']}")
+                    if 'post_time' in extra:
+                        item_lines.append(f"     📅 发布时间: {extra['post_time']}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[IT之家喜加一]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'guokr':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[果壳热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == '36kr':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[36氪热榜]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            elif type_name == 'history':
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    extra = item.get('extra', {})
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    
+                    # 添加额外信息（根据history数据结构）
+                    if 'year' in extra:
+                        item_lines.append(f"     📅 {extra['year']}年")
+                    
+                    hot_items.append("\n".join(item_lines))
+                hot_str = "\n\n".join(hot_items)
+                return f"[历史上的今天]\n更新时间: {update_time}\n\n{hot_str}"
+                
+            else:
+                # 通用格式处理其他类型的热榜
+                hot_items = []
+                for i, item in enumerate(hot_list, 1):
+                    title = item.get('title', 'N/A')
+                    url = item.get('url', 'N/A')
+                    hot_value = item.get('hot_value', 'N/A')
+                    
+                    # 构建热榜条目
+                    item_lines = [f"{i:2d}. {title}"]
+                    if hot_value != 'N/A':
+                        item_lines.append(f"     🔥 {hot_value}")
+                    if url != 'N/A':
+                        item_lines.append(f"     🔗 {url}")
+                    
+                    hot_items.append("\n".join(item_lines))
 
-            hot_str = "\n".join(hot_items)
-            return f"[{type_name}热榜]\n子类型: {subtype}\n数据源: {source}\n总数: {total_count}\n更新时间: {update_time}\n\n{hot_str}"
-
+                hot_str = "\n\n".join(hot_items)
+                return f"[{type_name}热榜]\n更新时间: {update_time}\n\n{hot_str}"
         elif command_name == "世界时间查询":
             if not data or 'datetime' not in data:
                 return "未获取到时间信息"
@@ -1744,13 +2080,6 @@ UAPI_COMMAND_HELP = {
 - top_text: 上方文字
 - bottom_text: 下方文字""",
 
-    "SVG转图片": """【SVG转图片 帮助】
-功能：SVG转图片
-用法：SVG转图片 [file_path]
-示例：SVG转图片 input.svg
-参数说明：
-- file_path: SVG文件路径""",
-
     "翻译": """【翻译 帮助】
 功能：文本翻译
 用法：翻译 [to_lang] [text]
@@ -1893,7 +2222,6 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             # 提前导入需要的模块，以避免在异常处理时出现变量作用域问题
             import aiohttp
             import tempfile
-            import os
 
             uid = args[0]
             result = await api.get_bilibili_userinfo(uid=uid)
@@ -1902,42 +2230,35 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 formatted_result = format_uapi_response(command_name, result, config)
                 
                 # 检查格式化结果是否是包含头像URL的特殊格式
-                if isinstance(formatted_result, dict) and "text" in formatted_result and "face_url" in formatted_result:
-                    
-                    text_info = formatted_result["text"]
-                    face_url = formatted_result["face_url"]
-                    
-                    # 如果头像URL存在且有效，则下载图片
-                    if face_url and face_url != 'N/A' and face_url.startswith('http'):
-                        try:
-                            # 下载头像图片
-                            timeout = aiohttp.ClientTimeout(total=10)
-                            async with aiohttp.ClientSession(timeout=timeout) as session:
-                                async with session.get(face_url) as resp:
-                                    if resp.status == 200:
-                                        image_data = await resp.read()
-                                        
-                                        # 保存到临时文件
-                                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
-                                            tmp_file.write(image_data)
-                                            tmp_file_path = tmp_file.name
-                                        
-                                        # 返回包含文本和图片路径的特殊格式
-                                        return {"type": "uapi_bilibili_user", "text": text_info, "image_path": tmp_file_path}
-                                    else:
-                                        # 如果下载失败，仅返回文本信息
-                                        logging.warning(f"下载B站用户头像失败: {face_url}, 状态码: {resp.status}")
-                                        return text_info
-                        except Exception as e:
-                            logging.error(f"下载B站用户头像异常: {e}")
-                            # 如果下载异常，仅返回文本信息
-                            return text_info
-                    else:
-                        # 如果没有有效头像URL，仅返回文本信息
+                text_info = formatted_result["text"]
+                face_url = formatted_result["face_url"]
+                
+                # 如果头像URL存在且有效，则下载图片
+                if face_url and face_url != 'N/A' and face_url.startswith('http'):
+                    try:
+                        # 下载头像图片
+                        timeout = aiohttp.ClientTimeout(total=10)
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.get(face_url) as resp:
+                                if resp.status == 200:
+                                    # 保存图片到临时文件
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                                        tmp_file.write(await resp.read())
+                                        tmp_file_path = tmp_file.name
+                                    
+                                    # 返回包含文本和图片路径的特殊格式
+                                    return {"type": "uapi_bilibili_user", "text": text_info, "image_path": tmp_file_path}
+                                else:
+                                    # 如果下载失败，仅返回文本信息
+                                    logging.warning(f"下载B站用户头像失败: {face_url}, 状态码: {resp.status}")
+                                    return text_info
+                    except Exception as e:
+                        logging.error(f"下载B站用户头像异常: {e}")
+                        # 如果下载异常，仅返回文本信息
                         return text_info
                 else:
-                    # 如果格式化结果不是特殊格式，直接返回格式化结果
-                    return formatted_result
+                    # 如果没有有效头像URL，仅返回文本信息
+                    return text_info
             else:
                 return "B站用户查询失败"
 
@@ -2042,6 +2363,48 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             else:
                 return "ICP备案查询失败"
 
+        elif command_name == "B站投稿查询":
+            if not args or not args[0].isdigit():
+                return "请提供B站用户mid\n示例: /B站投稿查询 483307278\n示例: /B站投稿查询 483307278 地震 pubdate 10 1"
+            
+            mid = args[0]
+            keywords = ""
+            orderby = "pubdate"
+            ps = "20"
+            pn = "1"
+            
+            # 解析可选参数
+            if len(args) > 1:
+                keywords = args[1]
+            if len(args) > 2:
+                orderby = args[2].lower()
+                if orderby not in ["pubdate", "views"]:
+                    return "排序方式无效，请使用 'pubdate' (最新发布) 或 'views' (最多播放)"
+            if len(args) > 3:
+                try:
+                    ps_int = int(args[3])
+                    if ps_int < 1 or ps_int > 50:
+                        return "每页条数必须在1-50之间"
+                    ps = str(ps_int)
+                except ValueError:
+                    return "每页条数必须是数字"
+            if len(args) > 4:
+                try:
+                    pn_int = int(args[4])
+                    if pn_int < 1:
+                        return "页码必须大于0"
+                    pn = str(pn_int)
+                except ValueError:
+                    return "页码必须是数字"
+            
+            result = await api.get_bilibili_archives(mid=mid, keywords=keywords, orderby=orderby, ps=ps, pn=pn)
+            if result:
+                return format_uapi_response(command_name, result, config)
+            else:
+                return "B站投稿查询失败"
+
+                return "ICP备案查询失败"
+
         elif command_name == "IP信息查询":
             if not args or not args[0]:
                 return "请提供IP地址或域名\n示例: /IP信息查询 8.8.8.8"
@@ -2102,7 +2465,7 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 return "随机字符串生成失败"
 
         elif command_name == "必应壁纸":
-            result = await api.get_bing_daily()
+            result = await api.get_image_bing_daily()
             if result:
                 return result  # 返回图片二进制数据
             else:
@@ -2492,7 +2855,6 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             
             image_path = args[0]
             # 验证文件路径安全性，防止路径遍历
-            import os
             if '..' in image_path or image_path.startswith('/') or ':' in image_path and image_path[1] == '\\':
                 return "无效的文件路径，不允许使用相对路径或绝对路径"
             
@@ -2531,7 +2893,6 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
 
             svg_path = args[0]
             # 验证文件路径安全性，防止路径遍历
-            import os
             if '..' in svg_path or svg_path.startswith('/') or ':' in svg_path and svg_path[1] == '\\':
                 return "无效的文件路径，不允许使用相对路径或绝对路径"
             
@@ -2601,6 +2962,13 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 return result  # 返回图片二进制数据
             else:
                 return "生成摸摸头GIF POST失败"
+
+        elif command_name == "每日新闻图":
+            result = await api.get_daily_news_image()
+            if result:
+                return result  # 返回图片二进制数据
+            else:
+                return "每日新闻图获取失败"
 
         else:
             return f"未知的UAPI命令: {command_name}"

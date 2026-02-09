@@ -1049,7 +1049,6 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                     if msg_type == 'image' and data:
                         # 发送图片
                         import tempfile
-                        import os
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
                             tmp_file.write(data)
                             tmp_file_path = tmp_file.name
@@ -1066,7 +1065,6 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                 elif isinstance(result, bytes):
                     # 如果返回的是字节数据（图片），保存到临时文件并发送
                     import tempfile
-                    import os
                     tmp_file_path = None
                     try:
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
@@ -1092,11 +1090,59 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
             except Exception as e:
                 logging.error(f"处理UAPI命令异常: {e}")
                 await send_group_msg(group_id, f"UAPI命令处理出错: {str(e)}")
-        else:
-            logging.debug(f"不是有效的UAPI命令: {raw_message}")
+        # 只有当消息明确是UAPI命令格式但UAPI不可用时才显示错误
+        elif UAPI_AVAILABLE and raw_message.strip():
+            first_word = raw_message.strip().split()[0].strip()
+            # 检查是否是潜在的UAPI命令前缀
+            potential_uapi_commands = [
+                # 社交类 API
+                "B站直播间查询", "B站用户查询", "B站投稿查询", "GitHub仓库查询",
+                
+                # 杂项类 API
+                "热榜查询", "世界时间查询", "天气查询", "手机归属地查询", "随机数生成",
+                "程序员历史上的今天", "程序员历史事件",
+                
+                # 网络类 API
+                "ICP备案查询", "IP信息查询", "WHOIS查询", "Ping主机", "DNS查询", 
+                "URL可访问性", "端口扫描",
+                
+                # 游戏类 API
+                "MC服务器查询", "Steam用户查询", "Epic免费游戏", "MC玩家查询", "MC曾用名查询",
+                
+                # 文本类 API
+                "文本分析", "MD5哈希", "MD5校验", "Base64编码", "Base64解码", 
+                "AES加密", "AES解密", "AES高级加密", "AES高级解密", "格式转换",
+                
+                # 随机类 API
+                "随机图片", "答案之书", "随机字符串",
+                
+                # 图像类 API
+                "必应壁纸", "上传图片", "图片转Base64", "生成二维码", "GrAvatar头像", 
+                "摸摸头", "生成摸摸头GIF", "无损压缩图片", "生成你们怎么不说话了表情包", "SVG转图片",
+                
+                # 翻译类 API
+                "翻译",
+                
+                # 诗词类 API
+                "一言",
+                
+                # 网页解析类 API
+                "网页元数据提取", "网页图片提取",
+                
+                # 转换类 API
+                "时间戳转换", "JSON格式化",
+                
+                # 日常类 API
+                "每日新闻图"
+            ]
+            
+            if first_word in potential_uapi_commands:
+                await send_group_msg(group_id, "UAPI功能未启用，请检查配置")
+        # 其他情况（如地震消息）直接忽略，不显示任何错误信息
+        return
 
 
-async def broadcast_message_to_all_groups(message: str, config: Dict[str, Any], source_group: str, sender_user: str) -> None:
+async def broadcast_message_to_all_groups(message: str, config: Dict[str, Any], source_group: str, user_id: str) -> None:
     """
     将消息广播到所有群
     :param message: 要广播的消息

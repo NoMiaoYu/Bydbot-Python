@@ -173,7 +173,7 @@ def get_help_message():
 【UAPI功能】
 • /B站直播间查询 [mid/room_id] [ID] - 查询B站直播间
 • /B站用户查询 [UID] - 查询B站用户信息
-• /B站投稿查询 [mid] - 查询B站用户投稿
+• /B站投稿查询 [mid] [关键词] [排序] [每页数量] [页码] - 查询B站用户投稿
 • /GitHub仓库查询 [owner] [repo] - 查询GitHub仓库
 • /热榜查询 [type] - 查询各平台热榜
 • /世界时间查询 [city] - 查询世界时间

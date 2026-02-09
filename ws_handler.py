@@ -636,7 +636,6 @@ async def download_and_send_cwa_image(group_id, image_url, event_data, config):
                 if resp.status == 200:
                     # 下载图片到临时文件
                     import tempfile
-                    import os
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
                         tmp_file.write(await resp.read())
                         tmp_file_path = tmp_file.name
@@ -1038,7 +1037,6 @@ async def connect_to_fan_ws(config):
 # API使用统计相关函数
 async def record_weather_api_usage(group_id: str, user_id: str, command: str, api_endpoint: str):
     """记录天气API调用"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
 
     current_date = datetime.now().strftime('%Y-%m-%d')
@@ -1055,7 +1053,6 @@ async def record_weather_api_usage(group_id: str, user_id: str, command: str, ap
 
 async def get_daily_usage_count():
     """获取今日API调用次数"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_date = datetime.now().strftime('%Y-%m-%d')
 
@@ -1070,7 +1067,6 @@ async def get_daily_usage_count():
 
 async def get_monthly_usage_count():
     """获取本月API调用次数"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_month = datetime.now().strftime('%Y-%m')
 
@@ -1085,7 +1081,6 @@ async def get_monthly_usage_count():
 
 async def get_top_users_daily():
     """获取今日调用最多的用户"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_date = datetime.now().strftime('%Y-%m-%d')
 
@@ -1105,7 +1100,6 @@ async def get_top_users_daily():
 
 async def get_top_users_monthly():
     """获取本月调用最多的用户"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_month = datetime.now().strftime('%Y-%m')
 
@@ -1125,7 +1119,6 @@ async def get_top_users_monthly():
 
 async def get_top_groups_daily():
     """获取今日调用最多的群组"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_date = datetime.now().strftime('%Y-%m-%d')
 
@@ -1145,7 +1138,6 @@ async def get_top_groups_daily():
 
 async def get_top_groups_monthly():
     """获取本月调用最多的群组"""
-    from datetime import datetime
     db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
     current_month = datetime.now().strftime('%Y-%m')
 

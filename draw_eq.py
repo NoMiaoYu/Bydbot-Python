@@ -342,7 +342,6 @@ def add_info_text(ax_final, time, place, info_type, mag, lon, lat):
     bbox_height = 0.04  # 文本框高度
 
     # 添加文本框背景
-    from matplotlib.patches import FancyBboxPatch
     bbox = FancyBboxPatch(
         (0.01, 0.92),
         bbox_width, bbox_height,
@@ -366,49 +365,33 @@ def add_info_text(ax_final, time, place, info_type, mag, lon, lat):
     )
 
 
-def calculate_font_size(info_text):
+def calculate_font_size(text):
     """根据文本长度计算合适的字体大小"""
-    text_length = len(info_text)
-    base_font_size = 14
-    if text_length > 20:
-        font_size = base_font_size * (20 / text_length)
-    elif text_length < 10:
-        font_size = base_font_size * 1.2
+    base_font_size = 12
+    text_length = len(text)
+    
+    # 根据文本长度动态调整字体大小
+    if text_length <= 30:
+        return base_font_size
+    elif text_length <= 40:
+        return base_font_size - 1
+    elif text_length <= 50:
+        return base_font_size - 2
     else:
-        font_size = base_font_size
-    return max(10, min(16, font_size))  # 限制字体大小范围
+        return max(8, base_font_size - 3)
 
 
-def calculate_textbox_width(fig, info_text, font_size):
-    """计算文本框宽度"""
-    try:
-        # 使用TextPath来精确测量文本宽度
-        from matplotlib.textpath import TextPath
-        from matplotlib.font_manager import FontProperties
-
-        # 获取字体属性
-        font_props = FontProperties()
-        font_props.set_family(['Minecraft AE'])
-
-        # 创建文本路径来测量实际文本宽度
-        tp = TextPath((0, 0), info_text, size=font_size, prop=font_props)
-        # 获取文本边界框的宽度
-        text_bbox = tp.get_extents()
-        text_width_points = text_bbox.width
-
-        # 转换为相对于图形的宽度估算
-        estimated_text_width_ratio = text_width_points / (fig.get_figwidth() * 72)  # 72 points per inch
-
-        # 为了确保文本框足够宽，增加一些边距
-        padding_ratio = 0.05  # 5%的额外空间
-        calculated_text_box_width = min(0.8, estimated_text_width_ratio + padding_ratio)
-
-        # 确保文本框最小宽度
-        return max(0.2, calculated_text_box_width)
-    except:
-        # 如果无法精确计算，使用默认宽度
-        return 0.4
-"""
-Bydbot - 绘图模块
-负责生成地震相关图像
-"""
+def calculate_textbox_width(fig, text, font_size):
+    """计算文本框的宽度"""
+    # 创建一个临时文本对象来测量宽度
+    temp_text = fig.text(0, 0, text, fontsize=font_size, visible=False)
+    fig.canvas.draw()
+    bbox = temp_text.get_window_extent()
+    width_in_inches = bbox.width / fig.dpi
+    # 转换为 figure 坐标系的相对宽度
+    width_relative = width_in_inches / fig.get_figwidth()
+    # 添加一些padding
+    width_relative += 0.02
+    # 确保不会超出figure边界
+    width_relative = min(width_relative, 0.98)
+    return width_relative
