@@ -13,6 +13,9 @@ from typing import Dict, Any
 
 import websockets
 
+# 导入配置包装器
+from config_wrapper import get_config, load_config
+
 # 检查CMA气象预警订阅模块是否可用
 try:
     import cma_weather_subscriber
@@ -33,16 +36,6 @@ UAPI_AVAILABLE = True
 # 用于在模块间共享状态
 def get_broadcast_mode():
     return broadcast_mode
-
-
-def load_config() -> Dict[str, Any]:
-    """加载配置文件"""
-    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"配置文件 {config_path} 不存在，请创建 config.json")
-
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
 
 
 def setup_logging(log_file: str) -> None:
@@ -89,10 +82,10 @@ async def init_sender(napcat_url: str, token: str):
     await init_msg_sender(napcat_url, token)
 
 
-async def napcat_ws_handler(websocket, path, config):
+async def napcat_ws_handler(websocket, config):
     """处理NapCat WebSocket连接"""
     from command_handler import handle_command
-    
+
     async for message in websocket:
         try:
             event = json.loads(message)
@@ -121,10 +114,18 @@ async def periodic_cleanup():
 
 def validate_config(config: Dict[str, Any]) -> bool:
     """验证配置文件的必要字段"""
-    required_fields = ['napcat_http_url']
-    for field in required_fields:
-        if field not in config:
-            logging.error(f"配置文件缺少必要字段: {field}")
+    # 使用配置包装器验证
+    wrapper = get_config()
+    
+    # 检查新配置结构
+    if 'napcat' in config:
+        if 'http_url' not in config['napcat']:
+            logging.error("配置文件缺少必要字段: napcat.http_url")
+            return False
+    else:
+        # 检查旧配置结构（向后兼容）
+        if 'napcat_http_url' not in config:
+            logging.error("配置文件缺少必要字段: napcat_http_url")
             return False
     return True
 
@@ -185,13 +186,17 @@ def get_help_message():
 • /一言 - 获取一句优美的话
 
 【气象预警订阅】
-• /订阅预警 [省份] - 订阅某省气象预警
-• /取消订阅预警 [省份] - 取消订阅某省预警
+• /订阅预警 [省份/地区] - 订阅某省或地区气象预警
+• /订阅预警 全国 - 订阅全国气象预警（接收所有预警）
+• /取消订阅预警 [省份/地区] - 取消订阅某省或地区预警
+• /取消订阅预警 全国 - 取消订阅全国气象预警
 • /我的订阅 - 查看个人订阅列表
+• /测试气象预警 - 测试气象预警推送功能（仅主人，需先订阅地区）
 
 【系统命令】
-• /bydbottest - 运行测试命令
+• /eqtest - 运行测试命令（仅主人）
 • /broadcast 或 /群发 - 进入广播模式（仅主人）
+• /测试气象预警 - 测试气象预警推送功能（仅主人，需先订阅地区）
 
 【数据源说明】
 • 当前支持30+个地震数据源
@@ -242,8 +247,13 @@ async def main():
     processed_ids.update(recent_ids)
 
     # 初始化消息发送器
-    napcat_url = config.get('napcat_http_url', 'http://127.0.0.1:3000')
-    token = config.get('napcat_token', '')
+    # 支持新旧配置格式
+    if 'napcat' in config:
+        napcat_url = config['napcat'].get('http_url', 'http://127.0.0.1:3000')
+        token = config['napcat'].get('token', '')
+    else:
+        napcat_url = config.get('napcat_http_url', 'http://127.0.0.1:3000')
+        token = config.get('napcat_token', '')
     await init_sender(napcat_url, token)
 
     # 初始化CMA气象预警订阅器
@@ -265,7 +275,7 @@ async def main():
         ws_port = config.get("ws_port", 9998)
 
         start_server = websockets.serve(
-            lambda ws, path: napcat_ws_handler(ws, path, config),
+            lambda ws: napcat_ws_handler(ws, config),
             "0.0.0.0",
             ws_port,
             ping_interval=20,

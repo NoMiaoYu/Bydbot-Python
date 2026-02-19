@@ -22,9 +22,6 @@ initial_earthquake_data: list = []
 # 用于存储已处理的地震消息ID集合
 processed_ids: Set[str] = set()
 
-# 用于存储待处理的绘图任务（源ID -> 任务信息）
-pending_draw_tasks: Dict[str, Dict[str, Any]] = {}
-
 # 用于缓存已绘制的图片路径（消息ID -> 图片路径）
 cached_image_paths: Dict[str, str] = {}
 
@@ -520,11 +517,11 @@ async def process_earthquake_message(event_data, source, config, target_group=No
         groups_to_push = [target_group]
         logging.info(f"指定推送群: {target_group}")
     else:
-        groups_to_push = config['groups'].keys()
+        groups_to_push = config.get('groups', {}).keys()
         logging.info(f"向所有配置群推送: {list(groups_to_push)}")
 
     for group_id in groups_to_push:
-        group_config = config['groups'].get(group_id, {})
+        group_config = config.get('groups', {}).get(group_id, {})
 
         # 检查推送规则
         if not should_push_to_group(group_id, source, group_config):
@@ -532,9 +529,6 @@ async def process_earthquake_message(event_data, source, config, target_group=No
 
         # 发送文本消息
         await send_earthquake_message(group_id, event_data, source, config)
-
-        # 绘制并发送图片
-        await send_earthquake_image(group_id, event_data, source, config)
 
 
 async def send_earthquake_message(group_id, event_data, source, config):
@@ -568,133 +562,6 @@ async def send_earthquake_message(group_id, event_data, source, config):
         logging.warning(f"模板填充失败 (群 {group_id}): {e}")
 
 
-async def send_earthquake_image(group_id, event_data, source, config):
-    """发送地震图像到群组"""
-    if source not in config['draw_sources']:
-        return
-
-    filters = config['draw_filters'].get(source, {})
-    if not all(re.search(regex, str(event_data.get(field, ''))) for field, regex in filters.items()):
-        logging.info(f"数据源 {source} 未通过绘图过滤规则，跳过绘图")
-        return
-
-    # 检查是否有cwa提供的imageURI
-    if source == "cwa" and "imageURI" in event_data:
-        image_url = event_data["imageURI"]
-        logging.info(f"使用cwa提供的图片URL: {image_url}")
-        await download_and_send_cwa_image(group_id, image_url, event_data, config)
-    else:
-        # 非cwa数据源或没有imageURI字段，使用本地绘图
-
-        # 获取消息ID用于缓存
-        msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
-
-        # 检查是否已有缓存的图片
-        if msg_id in cached_image_paths:
-            img_path = cached_image_paths[msg_id]
-            if os.path.exists(img_path):
-                logging.info(f"复用已缓存的图片: {img_path}")
-                await send_group_img(group_id, img_path)
-                return
-            else:
-                # 缓存的文件不存在，移除缓存
-                del cached_image_paths[msg_id]
-                logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
-
-        # 应用字段规则（但保留原始数值用于绘图）
-        processed_event_data = apply_field_rules(event_data, source, config)
-
-        # 使用规范化后的经纬度数据
-        normalized_event_data = processed_event_data.copy()
-        formatted_coords = format_coordinates(processed_event_data)
-        if 'longitude_normalized' in formatted_coords:
-            normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
-        if 'latitude_normalized' in formatted_coords:
-            normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
-
-        # 添加数据源信息用于断层绘制判断
-        normalized_event_data['_source'] = source
-
-        logging.info(f"为群 {group_id} 生成地震地图")
-        img_path = await asyncio.wait_for(
-            draw_earthquake_async(normalized_event_data, source),
-            timeout=config.get('draw_timeout', 20)
-        )
-        if img_path:
-            # 缓存图片路径
-            cached_image_paths[msg_id] = img_path
-            await send_group_img(group_id, img_path)
-            logging.info(f"成功向群 {group_id} 发送地震地图: {img_path}")
-
-
-async def download_and_send_cwa_image(group_id, image_url, event_data, config):
-    """下载并发送CWA提供的图像"""
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status == 200:
-                    # 下载图片到临时文件
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_file:
-                        tmp_file.write(await resp.read())
-                        tmp_file_path = tmp_file.name
-
-                    # 发送图片
-                    await send_group_img(group_id, tmp_file_path)
-                    os.remove(tmp_file_path)  # 发送后删除临时文件
-                    logging.info(f"成功向群 {group_id} 发送cwa提供的地震图片")
-                else:
-                    logging.warning(f"下载cwa图片失败，状态码: {resp.status}，切换到本地绘图")
-                    # 如果下载失败，使用本地绘图
-                    await send_local_earthquake_image(group_id, event_data, config)
-    except Exception as e:
-        logging.error(f"下载或发送cwa图片失败: {e}，切换到本地绘图")
-        # 如果下载或发送失败，使用本地绘图
-        await send_local_earthquake_image(group_id, event_data, config)
-
-
-async def send_local_earthquake_image(group_id, event_data, config):
-    """发送本地绘制的地震图像"""
-    # 获取数据源（从event_data中提取，如果有的话）
-    source = event_data.get('_source', 'unknown')
-
-    # 获取消息ID用于缓存
-    msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
-
-    # 检查是否已有缓存的图片
-    if msg_id in cached_image_paths:
-        img_path = cached_image_paths[msg_id]
-        if os.path.exists(img_path):
-            logging.info(f"复用已缓存的图片: {img_path}")
-            await send_group_img(group_id, img_path)
-            return
-        else:
-            # 缓存的文件不存在，移除缓存
-            del cached_image_paths[msg_id]
-            logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
-
-    # 使用规范化后的经纬度数据
-    normalized_event_data = event_data.copy()
-    formatted_coords = format_coordinates(event_data)
-    if 'longitude_normalized' in formatted_coords:
-        normalized_event_data['longitude'] = formatted_coords['longitude_normalized']
-    if 'latitude_normalized' in formatted_coords:
-        normalized_event_data['latitude'] = formatted_coords['latitude_normalized']
-
-    normalized_event_data['_source'] = source
-
-    img_path = await asyncio.wait_for(
-        draw_earthquake_async(normalized_event_data, source),
-        timeout=config.get('draw_timeout', 20)
-    )
-    if img_path:
-        # 缓存图片路径
-        cached_image_paths[msg_id] = img_path
-        await send_group_img(group_id, img_path)
-        logging.info(f"成功向群 {group_id} 发送本地绘制的地震地图: {img_path}")
-
-
 async def handle_heartbeat():
     """处理心跳消息"""
     global HEARTBEAT_COUNT
@@ -722,11 +589,10 @@ async def handle_initial_data(data, config):
             processed_ids.add(eq_id)
             logging.debug(f"将初始数据ID加入去重集合: {eq_id}")
 
-        # 只存储有绘图功能的数据源
-        if source in config['draw_sources']:
-            initial_earthquake_data.append(item)
-            stored_count += 1
-    logging.info(f"解析 initial_all 数据: 总计 {len(initial_data)} 条，存储 {stored_count} 条用于绘图的数据源")
+        # 存储所有数据源用于测试命令
+        initial_earthquake_data.append(item)
+        stored_count += 1
+    logging.info(f"解析 initial_all 数据: 总计 {len(initial_data)} 条，存储 {stored_count} 条数据")
     return None
 
 
@@ -779,61 +645,6 @@ def has_significant_update(old_data, new_data):
                 return True
 
     return False
-
-
-async def cancel_pending_draw_task(source_id):
-    """取消待处理的绘图任务"""
-    if source_id in pending_draw_tasks:
-        task_info = pending_draw_tasks[source_id]
-        if not task_info['task'].done():
-            task_info['task'].cancel()
-            try:
-                await task_info['task']
-            except asyncio.CancelledError:
-                pass
-        del pending_draw_tasks[source_id]
-        logging.debug(f"已取消待处理的绘图任务: {source_id}")
-
-
-async def delayed_draw_and_send(event_data, source, config, target_group=None):
-    """延迟绘图并发送"""
-    try:
-        # 等待15秒，如果期间没有收到更新，则进行绘图
-        await asyncio.sleep(15)
-
-        # 检查是否仍然需要绘图（可能在等待期间被取消）
-        source_id = f"{source}_{event_data.get('id', event_data.get('shockTime', ''))}"
-        if source_id not in pending_draw_tasks:
-            return
-
-        logging.info(f"15秒内未收到更新，开始绘图: {source_id}")
-
-        # 推送目标
-        if target_group:
-            groups_to_push = [target_group]
-            logging.info(f"指定推送群: {target_group}")
-        else:
-            groups_to_push = config['groups'].keys()
-            logging.info(f"向所有配置群推送: {list(groups_to_push)}")
-
-        for group_id in groups_to_push:
-            group_config = config['groups'].get(group_id, {})
-
-            # 检查推送规则
-            if not should_push_to_group(group_id, source, group_config):
-                continue
-
-            try:
-                # 绘制并发送图片（使用复用逻辑）
-                await send_earthquake_image(group_id, event_data, source, config)
-            except Exception as e:
-                logging.error(f"向群 {group_id} 发送地震图片失败: {e}")
-                continue
-
-    except asyncio.CancelledError:
-        logging.debug(f"绘图任务被取消: {source}")
-    except Exception as e:
-        logging.error(f"延迟绘图失败: {e}")
 
 
 async def is_within_time_window(event_data, source, max_hours=1):
@@ -950,11 +761,6 @@ async def process_message(message, config, target_group=None, apply_rules=True):
         # 将ID加入内存集合
         processed_ids.add(composite_id)
 
-        # 一收到消息就进行时间校验（仅处理1小时内发生的地震）
-        if not await is_within_time_window(event_data, source, max_hours=1):
-            logging.info(f"地震事件超出1小时时间窗口，跳过处理: {event_data.get('id', 'unknown')}")
-            return None
-
         # 检查数据源是否启用
         if apply_rules:
             if not await check_source_enabled(source, event_data, config):
@@ -962,30 +768,18 @@ async def process_message(message, config, target_group=None, apply_rules=True):
                 await save_earthquake_to_db(event_data, source)
                 return None
 
-        # 存储接收到的数据，用于测试命令（不管过滤规则如何）
-        if source in config['draw_sources']:  # 只存储需要绘图的数据源
-            received_earthquake_data[source] = event_data
-            logging.info(f"存储数据源 {source} 用于测试命令")
+        # 一收到消息就进行时间校验（仅处理1小时内发生的地震）
+        if apply_rules:
+            if not await is_within_time_window(event_data, source, max_hours=1):
+                logging.info(f"地震事件超出1小时时间窗口，跳过处理: {event_data.get('id', 'unknown')}")
+                return None
 
-        # 发送文本消息（立即发送）
+        # 存储接收到的数据，用于测试命令
+        received_earthquake_data[source] = event_data
+        logging.info(f"存储数据源 {source} 用于测试命令")
+
+        # 发送文本消息和图片（统一处理，绘图逻辑在process_text_message_only中）
         await process_text_message_only(event_data, source, config, target_group)
-
-        # 处理绘图逻辑
-        if source in config['draw_sources']:
-            # 取消之前的待处理绘图任务（如果有）
-            source_id = f"{source}_{eq_id}"
-            await cancel_pending_draw_task(source_id)
-
-            # 创建新的延迟绘图任务
-            draw_task = asyncio.create_task(
-                delayed_draw_and_send(event_data, source, config, target_group)
-            )
-            pending_draw_tasks[source_id] = {
-                'task': draw_task,
-                'event_data': event_data,
-                'timestamp': datetime.now()
-            }
-            logging.info(f"创建延迟绘图任务: {source_id}")
 
         # 将地震数据保存到数据库
         await save_earthquake_to_db(event_data, source)
@@ -1000,11 +794,11 @@ async def process_text_message_only(event_data, source, config, target_group=Non
         groups_to_push = [target_group]
         logging.info(f"指定推送群: {target_group}")
     else:
-        groups_to_push = config['groups'].keys()
+        groups_to_push = config.get('groups', {}).keys()
         logging.info(f"向所有配置群推送: {list(groups_to_push)}")
 
     for group_id in groups_to_push:
-        group_config = config['groups'].get(group_id, {})
+        group_config = config.get('groups', {}).get(group_id, {})
 
         # 检查推送规则
         if not should_push_to_group(group_id, source, group_config):
@@ -1012,6 +806,10 @@ async def process_text_message_only(event_data, source, config, target_group=Non
 
         # 发送文本消息
         await send_earthquake_message(group_id, event_data, source, config)
+        
+        # 处理绘图逻辑（只在数据源支持绘图时）
+        if source in config.get('draw_sources', []):
+            await send_earthquake_image(group_id, event_data, source, config)
 
 
 async def connect_to_fan_ws(config):
@@ -1169,3 +967,42 @@ async def cleanup_processed_ids():
     processed_ids = recent_ids.copy()
     
     logging.info(f"已清理已处理ID集合，保留最近两周的 {len(processed_ids)} 个ID")
+
+
+async def send_earthquake_image(group_id, event_data, source, config):
+    """发送地震图像到群组"""
+    if source not in config.get('draw_sources', []):
+        return
+
+    # 获取消息ID用于缓存
+    msg_id = event_data.get('id', f"{event_data.get('shockTime', '')}_{event_data.get('latitude', '')}_{event_data.get('longitude', '')}_{event_data.get('magnitude', '')}")
+
+    # 检查是否已有缓存的图片
+    if msg_id in cached_image_paths:
+        img_path = cached_image_paths[msg_id]
+        if os.path.exists(img_path):
+            logging.info(f"复用已缓存的图片: {img_path}")
+            await send_group_img(group_id, img_path)
+            return
+        else:
+            # 缓存的文件不存在，移除缓存
+            del cached_image_paths[msg_id]
+            logging.info(f"缓存的图片不存在，重新绘制: {msg_id}")
+
+    logging.info(f"为群 {group_id} 生成地震地图")
+    
+    try:
+        img_path = await asyncio.wait_for(
+            draw_earthquake_async(event_data, source),
+            timeout=config.get('draw_timeout', 20)
+        )
+        
+        if img_path:
+            # 缓存图片路径
+            cached_image_paths[msg_id] = img_path
+            await send_group_img(group_id, img_path)
+            logging.info(f"成功向群 {group_id} 发送地震地图: {img_path}")
+    except asyncio.TimeoutError:
+        logging.error(f"绘图超时: {msg_id}")
+    except Exception as e:
+        logging.error(f"绘制地震地图失败: {e}")

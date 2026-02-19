@@ -1,17 +1,28 @@
 {
-  "napcat_http_url": "http://127.0.0.1:3000",
-  "napcat_token": "cm@C>|e8nnmUI_xu",
-  "ws_port": 9998,
-  "log_file": "bydbot.log",
-  "enable_command_listener": true,
-  "test_command": "/bydbottest",
-  "test_groups_only": false,
 
-  "owner_id": "180456825",
+  "napcat": {
+
+    "http_url": "http://127.0.0.1:3000",
+
+    "token": "cm@C>|e8nnmUI_xu",
+
+    "ws_port": 9998
+  },
 
 
-  "weather_api_enabled": true,
-  "weather_api_daily_limit": 1500,
+  "basic": {
+
+    "log_file": "bydbot.log",
+
+    "enable_command_listener": true,
+
+    "test_command": "/eqtest",
+
+    "test_groups_only": false,
+
+    "owner_id": "180456825"
+  },
+
 
   "groups": {
     "1071528933": {
@@ -28,106 +39,142 @@
     }
   },
 
-  "sources": {
-    "weatheralarm": false,
-    "tsunami": true,
-    "cenc": true,
-    "cea": true,
-    "cea-pr": true,
-    "sichuan": true,
-    "ningxia": true,
-    "guangxi": true,
-    "shanxi": true,
-    "beijing": true,
-    "cwa": true,
-    "cwa-eew": true,
-    "hko": true,
-    "jma": true,
-    "usgs": true,
-    "sa": true,
-    "emsc": true,
-    "bcsf": true,
-    "gfz": true,
-    "usp": true,
-    "kma": true,
-    "kma-eew": true,
-    "fssn": true
-  },
 
-  "source_rules": {
-    "usgs": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+  "earthquake": {
+
+    "sources": {
+      "weatheralarm": false,
+      "tsunami": true,
+      "cenc": true,
+      "cea": true,
+      "cea-pr": true,
+      "sichuan": true,
+      "ningxia": true,
+      "guangxi": true,
+      "shanxi": true,
+      "beijing": true,
+      "cwa": true,
+      "cwa-eew": true,
+      "hko": true,
+      "jma": true,
+      "usgs": true,
+      "sa": true,
+      "emsc": true,
+      "bcsf": true,
+      "gfz": true,
+      "usp": true,
+      "kma": true,
+      "kma-eew": true,
+      "fssn": true
     },
-    "jma": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+
+
+    "source_rules": {
+      "usgs": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "jma": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "hko": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "emsc": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "bcsf": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "gfz": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "usp": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "kma": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "kma-eew": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "sichuan": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "ningxia": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "guangxi": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "shanxi": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      },
+      "beijing": {
+        "enabled": true,
+        "match_field": "magnitude",
+        "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+      }
     },
-    "hko": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+
+
+    "time_window": {
+
+      "max_hours": 1
     },
-    "emsc": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+
+
+    "drawing": {
+
+      "sources": ["fssn", "usgs", "jma", "cwa", "cenc", "cea", "cea-pr"],
+
+      "timeout": 20,
+
+      "output_dir": "pictures"
     },
-    "bcsf": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+
+
+    "heartbeat": {
+
+      "log_interval": 3
     },
-    "gfz": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "usp": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "kma": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "kma-eew": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "sichuan": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "ningxia": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "guangxi": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "shanxi": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
-    },
-    "beijing": {
-      "enabled": true,
-      "match_field": "magnitude",
-      "regex": "^[5-9]\\d*(\\.\\d+)?$|^1[0-9]\\d*(\\.\\d+)?$"
+
+
+    "cleanup": {
+
+      "interval": 86400,
+
+      "retention_days": 7
     }
   },
 
-  "message_templates": {
+
+  "earthquake_templates": {
     "weatheralarm": "[中国气象局 气象预警]\n| 标题: {headline}\n| 生效时间: {effective}\n| 详细描述: {description}\n| 位置: {latitude} {longitude}\n| 预警类型: {type}",
 
     "tsunami": "[自然资源部 海啸预警]\n| 事件编码: {code}\n| 警报标题: {warningInfo.title}\n| 警报级别: {warningInfo.level}\n| 引发地震: {warningInfo.subtitle}\n| 发布单位: {warningInfo.orgUnit}\n| 警报批次: {details.batch}",
@@ -175,47 +222,48 @@
     "fssn": "[FSSN 地震速报]\n| 发生时间: {shockTime}\n| 震级: M {magnitude}\n| 深度: {depth}km\n| 震中: {placeName}\n| 经纬度: {longitude} {latitude}\n| 发表时间: {createTime}\n| 区划: {placeName_zh}\n| 速报类型: {infoTypeName}"
   },
 
+
   "qweather": {
+
     "api_host": "m659fc4xja.re.qweatherapi.com",
+
     "api_key": "166d9dc9998b4dce951b83e4acf51624",
+
     "jwt_token": "",
+
     "use_jwt": false,
+
     "cache_enabled": true,
-    "cache_ttl": 600
+
+    "cache_ttl": 600,
+
+    "daily_limit": 1500,
+
+    "enabled": true
   },
+
 
   "uapi": {
+
     "base_url": "https://uapis.cn",
+
     "api_key": "",
+
     "timeout": 30,
+
     "cache_enabled": true,
+
     "cache_ttl": 600
   },
 
+
   "uapi_rate_limit": {
+
     "max_calls_per_minute": 10,
+
     "enable_per_user_limits": true
   },
 
-  "weather_commands": {
-    "城市搜索": "/geo/v2/city/lookup",
-    "热门城市查询": "/geo/v2/city/top",
-    "POI搜索": "/geo/v2/poi/lookup",
-    "实时天气": "/v7/weather/now",
-    "每日天气预报": "/v7/weather/{days}",
-    "逐小时天气预报": "/v7/weather/{hours}",
-    "格点实时天气": "/v7/grid-weather/now",
-    "格点每日天气预报": "/v7/grid-weather/{days}",
-    "格点逐小时天气预报": "/v7/grid-weather/{hours}",
-    "分钟级降水": "/v7/minutely/5m",
-    "实时天气预警": "/weatheralert/v1/current/{latitude}/{longitude}",
-    "天气指数预报": "/v7/indices/{days}",
-    "实时空气质量": "/airquality/v1/current/{latitude}/{longitude}",
-    "空气质量每日预报": "/airquality/v1/daily/{latitude}/{longitude}",
-    "空气质量小时预报": "/airquality/v1/hourly/{latitude}/{longitude}",
-    "财务汇总": "/finance/v1/summary",
-    "请求量统计": "/metrics/v1/stats"
-  },
 
   "weather_templates": {
     "城市搜索": "[城市搜索结果]\n地点: {name}\n国家: {country}\n省份: {adm1}\n城市: {adm2}\nLocationID: {id}\n经度: {lon}\n纬度: {lat}",
@@ -263,19 +311,16 @@
     "请求量统计": "[请求量统计]\n项目: {project}\n凭据: {credential}\n总请求: {totalRequests}\n今日请求: {todayRequests}\n本月请求: {monthRequests}\n最后更新: {lastUpdateTime}"
   },
 
-  "draw_sources": ["fssn", "usgs", "jma", "cwa", "cenc", "cea", "cea-pr"],
 
-  "draw_filters": {},
+  "field_rules": {},
 
-  "draw_timeout": 20,
-
-  "field_rules": {
-
-  },
 
   "help": {
+
     "image_enabled": true,
+
     "image_paths": ["help命令.png"],
+
     "text_enabled": false
   }
 }

@@ -295,15 +295,7 @@ class UApiClient:
         params = {'username': username}
         return await self._make_request('GET', '/game/minecraft/userinfo', params)
 
-    async def get_minecraft_historyid(self, name: str = None, uuid: str = None) -> Optional[Dict[str, Any]]:
-        """查询MC曾用名"""
-        params = {}
-        if name:
-            params['name'] = name
-        if uuid:
-            params['uuid'] = uuid
-        
-        return await self._make_request('GET', '/game/minecraft/historyid', params)
+
 
     # 文本类 API
     async def post_text_analyze(self, text: str) -> Optional[Dict[str, Any]]:
@@ -638,56 +630,13 @@ class UApiClient:
             logging.error(f"必应壁纸获取异常: {e}")
             return None
 
-    async def post_image_motou(self, image_url: str = None, bg_color: str = "transparent") -> Optional[bytes]:
-        """生成摸摸头GIF (POST版本，通过图片URL)"""
-        try:
-            url = f"{self.base_url}/api/v1/image/motou"
-            headers = self._get_headers()
 
-            # 创建表单数据
-            form_data = FormData()
-
-            # 创建表单数据
-            form_data = FormData()
-            if image_url:
-                form_data.add_field('image_url', image_url)
-            form_data.add_field('bg_color', bg_color)
-
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
-                async with session.post(url, data=form_data, headers=headers) as response:
-                    # 检查响应内容长度，防止响应过大
-                    content_length = response.headers.get('Content-Length')
-                    if content_length:
-                        size_mb = int(content_length) / (1024 * 1024)
-                        if size_mb > 10:  # 限制10MB
-                            logging.warning(f"UAPI图片响应过大 {url}: {size_mb:.2f}MB")
-                            return None
-                    
-                    if response.status == 200:
-                        # 读取响应内容，但限制大小
-                        content = await response.read()
-                        size_mb = len(content) / (1024 * 1024)
-                        if size_mb > 10:  # 限制10MB
-                            logging.warning(f"UAPI图片响应过大 (通过内容长度): {size_mb:.2f}MB")
-                            return None
-                        
-                        return content  # 返回二进制图片数据
-                    else:
-                        error_text = await response.text()
-                        logging.error(f"UAPI摸摸头GIF POST请求失败 {url}: {response.status} - {error_text}")
-                        return None
-        except Exception as e:
-            logging.error(f"UAPI摸摸头GIF POST请求异常: {e}")
-            return None
-
-    # 图片压缩、SVG转换等功能也需要特殊的文件上传处理
 
     # 翻译类 API
     async def post_translate_text(self, to_lang: str, text: str) -> Optional[Dict[str, Any]]:
         """翻译"""
-        json_data = {'text': text}
-        params = {'to_lang': to_lang}
-        return await self._make_request('POST', '/translate/text', params=params, json_data=json_data)
+        json_data = {'ToLang': to_lang, 'Text': text}
+        return await self._make_request('POST', '/translate/text', json_data=json_data)
 
     # 诗词类 API
     async def get_saying(self) -> Optional[Dict[str, Any]]:
@@ -699,11 +648,6 @@ class UApiClient:
         """提取网页元数据"""
         params = {'url': url}
         return await self._make_request('GET', '/webparse/metadata', params)
-
-    async def get_webparse_extractimages(self, url: str) -> Optional[Dict[str, Any]]:
-        """提取网页图片"""
-        params = {'url': url}
-        return await self._make_request('GET', '/webparse/extractimages', params)
 
     # 转换类 API
     async def get_convert_unixtime(self, time_param: str) -> Optional[Dict[str, Any]]:
@@ -751,31 +695,6 @@ class UApiClient:
             return None
 
     # 图像类 API - 补充缺失的API端点
-    async def post_image_compress(self, file_path: str, level: int = 3, format_param: str = "png") -> Optional[bytes]:
-        """无损压缩图片"""
-        try:
-            url = f"{self.base_url}/api/v1/image/compress"
-            headers = self._get_headers()
-            
-            # 创建表单数据
-            form_data = FormData()
-            with open(file_path, 'rb') as f:
-                form_data.add_field('file', f, filename='image.jpg', content_type='image/jpeg')
-            form_data.add_field('level', str(level))
-            form_data.add_field('format', format_param)
-            
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
-                async with session.post(url, data=form_data, headers=headers) as response:
-                    if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
-                    else:
-                        error_text = await response.text()
-                        logging.error(f"UAPI图片压缩请求失败 {url}: {response.status} - {error_text}")
-                        return None
-        except Exception as e:
-            logging.error(f"UAPI图片压缩请求异常: {e}")
-            return None
-
     async def post_image_speechless(self, top_text: str, bottom_text: str) -> Optional[bytes]:
         """生成你们怎么不说话了表情包"""
         try:
@@ -800,36 +719,7 @@ class UApiClient:
             logging.error(f"UAPI表情包生成请求异常: {e}")
             return None
 
-    async def post_image_svg(self, file_path: str, format_param: str = "png", width: int = None, 
-                             height: int = None, quality: int = 90) -> Optional[bytes]:
-        """SVG转图片"""
-        try:
-            url = f"{self.base_url}/api/v1/image/svg"
-            headers = self._get_headers()
-            
-            # 创建表单数据
-            form_data = FormData()
-            with open(file_path, 'rb') as f:
-                form_data.add_field('file', f, filename='image.svg', content_type='image/svg+xml')
-            
-            # 添加查询参数
-            params = {'format': format_param, 'quality': str(quality)}
-            if width:
-                params['width'] = str(width)
-            if height:
-                params['height'] = str(height)
-            
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout)) as session:
-                async with session.post(url, data=form_data, params=params, headers=headers) as response:
-                    if response.status == 200:
-                        return await response.read()  # 返回二进制图片数据
-                    else:
-                        error_text = await response.text()
-                        logging.error(f"UAPI SVG转图片请求失败 {url}: {response.status} - {error_text}")
-                        return None
-        except Exception as e:
-            logging.error(f"UAPI SVG转图片请求异常: {e}")
-            return None
+
 
 
 async def test_uapi_client(config: Dict[str, Any]):

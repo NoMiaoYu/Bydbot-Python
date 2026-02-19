@@ -9,10 +9,11 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Optional
 import aiosqlite
 import os
 import requests
+import aiohttp
 from bs4 import BeautifulSoup
 
 from message_sender import send_group_msg
@@ -29,6 +30,9 @@ class CMAWeatherSubscriber:
         self.check_interval = 7 * 60  # 7分钟检查一次
         self.last_processed_alarms = set()  # 已处理的预警ID集合
         self.db_path = os.path.join(os.path.dirname(__file__), 'data', 'eqdata.db')
+        # 图标缓存目录
+        self.icon_cache_dir = os.path.join(os.path.dirname(__file__), 'pictures', 'weather_icons')
+        os.makedirs(self.icon_cache_dir, exist_ok=True)
         
     async def init_db(self):
         """初始化订阅相关的数据库表"""
@@ -128,11 +132,12 @@ class CMAWeatherSubscriber:
     async def subscribe_location(self, full_location: str, group_id: str, user_id: str) -> bool:
         """订阅特定地区的气象预警（支持省市区格式）"""
         try:
-            # 解析完整地区名称
-            # 假设格式为 "省份+城市+区县" 如 "广东深圳南山"
-            province = full_location[:2] if len(full_location) >= 2 else full_location
-            city = full_location[2:4] if len(full_location) >= 4 else ""
-            district = full_location[4:] if len(full_location) > 4 else ""
+            # 提取省份作为主要匹配字段
+            # 从完整地区名称中提取省份部分
+            province = self.extract_province_from_location(full_location)
+            if not province:
+                logging.error(f"无法从 {full_location} 中提取省份信息")
+                return False
             
             # 使用省份作为主要匹配字段，但存储完整路径
             async with aiosqlite.connect(self.db_path) as db:
@@ -207,16 +212,72 @@ class CMAWeatherSubscriber:
             logging.error(f"取消订阅失败: {e}")
             return False
             
-    async def get_user_subscriptions(self, user_id: str) -> List[Tuple[str, str]]:
-        """获取用户的订阅列表 (province, group_id)"""
+    async def subscribe_nationwide(self, group_id: str, user_id: str) -> bool:
+        """订阅全国气象预警（接收所有预警）"""
+        try:
+            # 使用特殊标识"全国"作为省份字段
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT OR IGNORE INTO weather_subscriptions (province, group_id, user_id, location_type, full_location) VALUES (?, ?, ?, 'nationwide', '全国')",
+                    ("全国", group_id, user_id)
+                )
+                await db.commit()
+                
+            # 更新内存中的订阅信息
+            if "全国" not in self.subscribers:
+                self.subscribers["全国"] = []
+            if (group_id, user_id) not in self.subscribers["全国"]:
+                self.subscribers["全国"].append((group_id, user_id))
+                
+            logging.info(f"用户 {user_id} 在群 {group_id} 订阅了全国气象预警")
+            return True
+            
+        except Exception as e:
+            logging.error(f"全国订阅失败: {e}")
+            return False
+            
+    async def unsubscribe_nationwide(self, group_id: str, user_id: str) -> bool:
+        """取消订阅全国气象预警"""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "DELETE FROM weather_subscriptions WHERE province='全国' AND group_id=? AND user_id=? AND location_type='nationwide'",
+                    (group_id, user_id)
+                )
+                await db.commit()
+                
+            # 更新内存中的订阅信息
+            if "全国" in self.subscribers:
+                self.subscribers["全国"] = [
+                    (g, u) for g, u in self.subscribers["全国"] 
+                    if not (g == group_id and u == user_id)
+                ]
+                if not self.subscribers["全国"]:
+                    del self.subscribers["全国"]
+                    
+            logging.info(f"用户 {user_id} 在群 {group_id} 取消订阅了全国气象预警")
+            return True
+            
+        except Exception as e:
+            logging.error(f"取消全国订阅失败: {e}")
+            return False
+            
+    async def get_user_subscriptions(self, user_id: str) -> List[Tuple[str, str, str]]:
+        """获取用户的订阅列表 (display_name, group_id, location_type)"""
         subscriptions = []
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
-                "SELECT province, group_id FROM weather_subscriptions WHERE user_id=?", 
+                "SELECT province, group_id, location_type, full_location FROM weather_subscriptions WHERE user_id=?", 
                 (user_id,)
             ) as cursor:
                 rows = await cursor.fetchall()
-                subscriptions = [(province, group_id) for province, group_id in rows]
+                for province, group_id, location_type, full_location in rows:
+                    # 根据订阅类型决定显示名称
+                    if location_type == 'location' and full_location:
+                        display_name = full_location  # 显示完整地区名称
+                    else:
+                        display_name = province  # 显示省份名称
+                    subscriptions.append((display_name, group_id, location_type))
                 
         return subscriptions
         
@@ -249,6 +310,79 @@ class CMAWeatherSubscriber:
                 found_provinces.append(province)
                 
         return found_provinces
+        
+    async def download_and_cache_icon(self, pic_url: str, alertid: str) -> Optional[str]:
+        """下载并缓存预警图标，返回本地文件路径"""
+        if not pic_url:
+            return None
+                
+        try:
+            # 生成本地文件名
+            filename = f"weather_icon_{alertid}.png"
+            local_path = os.path.join(self.icon_cache_dir, filename)
+                
+            # 检查是否已缓存
+            if os.path.exists(local_path):
+                logging.info(f"使用已缓存的预警图标: {local_path}")
+                return local_path
+                
+            # 下载图标
+            full_url = pic_url if pic_url.startswith('http') else f"https://www.nmc.cn{pic_url}"
+                
+            async with aiohttp.ClientSession() as session:
+                async with session.get(full_url) as resp:
+                    if resp.status == 200:
+                        img_data = await resp.read()
+                        with open(local_path, 'wb') as f:
+                            f.write(img_data)
+                        logging.info(f"预警图标下载并缓存成功: {local_path}")
+                        return local_path
+                    else:
+                        logging.error(f"下载预警图标失败，状态码: {resp.status}")
+                        return None
+        except Exception as e:
+            logging.error(f"下载预警图标时出错: {e}")
+            return None
+        
+    def extract_province_from_location(self, location: str) -> str:
+        """从完整地区名称中提取省份信息"""
+        # 常见的中国省份列表（包含后缀）
+        province_patterns = [
+            "北京市", "天津市", "上海市", "重庆市",
+            "河北省", "山西省", "辽宁省", "吉林省", "黑龙江省",
+            "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省",
+            "河南省", "湖北省", "湖南省", "广东省", "海南省",
+            "四川省", "贵州省", "云南省", "陕西省", "甘肃省", "青海省",
+            "内蒙古自治区", "广西壮族自治区", "西藏自治区", "宁夏回族自治区", "新疆维吾尔自治区",
+            "香港特别行政区", "澳门特别行政区", "台湾省"
+        ]
+        
+        # 简化版本的省份列表（不包含后缀）
+        simple_provinces = [
+            "北京", "天津", "上海", "重庆",
+            "河北", "山西", "辽宁", "吉林", "黑龙江",
+            "江苏", "浙江", "安徽", "福建", "江西", "山东",
+            "河南", "湖北", "湖南", "广东", "海南",
+            "四川", "贵州", "云南", "陕西", "甘肃", "青海",
+            "内蒙古", "广西", "西藏", "宁夏", "新疆",
+            "香港", "澳门", "台湾"
+        ]
+        
+        # 先尝试匹配完整格式
+        for pattern in province_patterns:
+            if location.startswith(pattern):
+                # 返回简化版本的省份名
+                for simple_prov in simple_provinces:
+                    if pattern.startswith(simple_prov):
+                        return simple_prov
+                return pattern.replace("省", "").replace("市", "").replace("自治区", "").replace("特别行政区", "")
+        
+        # 再尝试匹配简化格式
+        for simple_prov in simple_provinces:
+            if location.startswith(simple_prov):
+                return simple_prov
+                
+        return ""
         
     async def check_and_send_alarms(self):
         """检查并发送气象预警"""
@@ -291,9 +425,23 @@ class CMAWeatherSubscriber:
                 
                 # 检查是否有订阅的省份匹配
                 matched_subscribers = []
+                
+                # 检查普通省份订阅
                 for province in provinces_in_title:
                     if province in self.subscribers:
                         matched_subscribers.extend(self.subscribers[province])
+                
+                # 检查全国订阅（接收所有预警）
+                if "全国" in self.subscribers:
+                    matched_subscribers.extend(self.subscribers["全国"])
+                    logging.info(f"全国订阅者匹配到预警: {title}")
+                
+                # 检查地区级订阅
+                for full_location, subscribers_list in self.location_subscribers.items():
+                    # 简单匹配逻辑
+                    if full_location in title:
+                        matched_subscribers.extend(subscribers_list)
+                        logging.info(f"地区订阅者 {full_location} 匹配到预警: {title}")
                         
                 if not matched_subscribers:
                     continue  # 没有匹配的订阅者，跳过
@@ -313,42 +461,46 @@ class CMAWeatherSubscriber:
                 for group_id, user_id in matched_subscribers:
                     try:
                         # 构建预警消息
-                        message = self.build_warning_message(alarm, detail, user_id)
+                        message, icon_path = await self.build_warning_message(alarm, detail, user_id, group_id)
                         
-                        # 发送消息到群聊
-                        success = await send_group_msg(group_id, message)
+                        # 使用复合消息发送函数，在同一消息中发送文本和图片，并正确@用户
+                        from message_sender import send_group_msg_with_text_and_image
+                        success = await send_group_msg_with_text_and_image(group_id, message, icon_path, user_id)
+                        
                         if success:
-                            logging.info(f"成功发送预警到群 {group_id} @用户 {user_id}")
+                            logging.info(f"成功发送预警消息到群 {group_id} @用户 {user_id}")
                         else:
-                            logging.error(f"发送预警到群 {group_id} 失败")
-                            
+                            logging.error(f"发送预警消息到群 {group_id} @用户 {user_id} 失败")
+                        
                     except Exception as e:
                         logging.error(f"发送预警给群 {group_id} 用户 {user_id} 时出错: {e}")
                         
         except Exception as e:
             logging.error(f"检查气象预警时出错: {e}")
             
-    def build_warning_message(self, alarm: Dict, detail: Dict, user_id: str) -> str:
-        """构建预警消息"""
+    async def build_warning_message(self, alarm: Dict, detail: Dict, user_id: str, group_id: str = None) -> tuple[str, Optional[str]]:
+        """构建预警消息，返回(文本消息, 图标文件路径)"""
         title = alarm.get('title', '未知标题')
         issuetime = alarm.get('issuetime', '未知时间')
         pic_url = alarm.get('pic', '')
+        alertid = alarm.get('alertid', '')
         url = f"https://www.nmc.cn{alarm.get('url', '')}"
         
         detail_content = detail.get('content', '暂无详情')
-        if len(detail_content) > 200:  # 截断过长的详情
-            detail_content = detail_content[:200] + "..."
+        # 不截断详细内容，完整显示所有信息
             
-        message = f"@{user_id}\n"
-        message += f"[中国气象局气象预警]\n"
+        message = f"[中国气象局气象预警]\n"
         message += f"| 预警标题: {title}\n"
         message += f"| 发布时间: {issuetime}\n"
         message += f"| 详细内容: {detail_content}\n"
-        message += f"| 详细链接: {url}\n"
-        if pic_url:
-            message += f"| 预警图标: {pic_url}"
+        message += f"| 详细链接: {url}"
+        
+        # 下载并缓存图标
+        icon_path = None
+        if pic_url and group_id:
+            icon_path = await self.download_and_cache_icon(pic_url, alertid)
             
-        return message
+        return message, icon_path
         
     async def start_periodic_check(self):
         """启动定期检查任务"""

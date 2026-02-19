@@ -4,11 +4,14 @@ Bydbot - UAPI处理器
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from uapi_client import UApiClient
 import time
 from collections import defaultdict
 import os
+import aiohttp
+import asyncio
+from message_sender import send_group_msg, send_group_img
 
 
 # API调用频率限制相关
@@ -47,6 +50,69 @@ def check_api_rate_limit(user_id: str, group_id: str, config: Dict[str, Any]) ->
     # 记录本次调用
     uapi_usage[user_group_key].append(current_time)
     return True, ""
+
+async def download_skin_image(skin_url: str, username: str) -> Optional[str]:
+    """
+    下载MC玩家皮肤图片
+    :param skin_url: 皮肤URL
+    :param username: 玩家用户名
+    :return: 图片文件路径，失败返回None
+    """
+    try:
+        # 创建pictures目录
+        pictures_dir = os.path.join(os.path.dirname(__file__), 'pictures', 'minecraft')
+        os.makedirs(pictures_dir, exist_ok=True)
+        
+        # 生成文件名
+        filename = f"{username}_skin.png"
+        file_path = os.path.join(pictures_dir, filename)
+        
+        # 下载图片
+        async with aiohttp.ClientSession() as session:
+            async with session.get(skin_url) as resp:
+                if resp.status == 200:
+                    img_data = await resp.read()
+                    with open(file_path, 'wb') as f:
+                        f.write(img_data)
+                    logging.info(f"MC玩家皮肤下载成功: {file_path}")
+                    return file_path
+                else:
+                    logging.error(f"下载皮肤失败，状态码: {resp.status}")
+                    return None
+    except Exception as e:
+        logging.error(f"下载MC玩家皮肤失败: {e}")
+        return None
+
+async def format_uapi_response_with_skin(command_name: str, data: Any, config: Dict[str, Any], group_id: str, username: str = None) -> Optional[str]:
+    """
+    格式化UAPI响应（带图片发送）
+    :param command_name: 命令名称
+    :param data: API返回的数据
+    :param config: 配置
+    :param group_id: 群ID
+    :param username: 用户名（用于MC皮肤）
+    :return: 文本消息，如果成功发送图片则返回None
+    """
+    if command_name == "MC玩家查询" and username and data:
+        if 'skin_url' in data and data['skin_url'] != 'N/A':
+            skin_url = data['skin_url']
+            img_path = await download_skin_image(skin_url, username)
+            
+            if img_path:
+                # 生成文本消息
+                text = f"[MC玩家查询]\n用户名: {data.get('username', 'N/A')}\nUUID: {data.get('uuid', 'N/A')}"
+                
+                # 先发送文本消息
+                await send_group_msg(group_id, text)
+                
+                # 然后发送图片
+                await send_group_img(group_id, img_path)
+                
+                # 返回None表示已处理
+                return None
+    
+    # 其他情况返回普通文本
+    return format_uapi_response(command_name, data, config)
 
 def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -> str:
     """
@@ -816,21 +882,11 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             timezone = data.get('timezone', 'N/A')
             weekday = data.get('weekday', 'N/A')
             offset_string = data.get('offset_string', 'N/A')
-            unix_time = data.get('unix_time', 'N/A')
-            timestamp = data.get('timestamp', 'N/A')
-            country = data.get('country', 'N/A')
-            region = data.get('region', 'N/A')
-            abbreviation = data.get('abbreviation', 'N/A')
-            dst = data.get('dst', 'N/A')  # 是否夏令时
-            dst_start = data.get('dst_start', 'N/A')
-            dst_end = data.get('dst_end', 'N/A')
-            utc_offset = data.get('utc_offset', 'N/A')
-            formatted_date = data.get('formatted_date', 'N/A')
-            formatted_time = data.get('formatted_time', 'N/A')
-            timezone_name = data.get('timezone_name', 'N/A')
-            gmt_offset = data.get('gmt_offset', 'N/A')
+            timestamp_unix = data.get('timestamp_unix', 'N/A')
+            offset_seconds = data.get('offset_seconds', 'N/A')
+            query = data.get('query', 'N/A')
 
-            return f"[世界时间查询]\n时区: {timezone}\n时区名称: {timezone_name}\n国家: {country}\n地区: {region}\n缩写: {abbreviation}\nUTC偏移: {utc_offset}\nGMT偏移: {gmt_offset}\n夏令时: {dst}\n偏移量: {offset_string}\n星期: {weekday}\n日期: {formatted_date}\n时间: {formatted_time}\nUnix时间戳: {unix_time}\n时间戳: {timestamp}\n完整时间: {datetime}"
+            return f"[世界时间查询]\n查询时区: {query}\n当前时区: {timezone}\n日期时间: {datetime}\n星期: {weekday}\nUTC偏移: {offset_string}\n偏移秒数: {offset_seconds}\nUnix时间戳: {timestamp_unix}"
 
         elif command_name == "天气查询":
             if not data or 'temperature' not in data:
@@ -838,33 +894,16 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
 
             city = data.get('city', '未知城市')
             province = data.get('province', '未知省份')
-            temperature = data.get('temperature', 'N/A')
+            adcode = data.get('adcode', 'N/A')
             weather = data.get('weather', 'N/A')
-            humidity = data.get('humidity', 'N/A')
+            weather_code = data.get('weather_code', 'N/A')
+            temperature = data.get('temperature', 'N/A')
             wind_direction = data.get('wind_direction', 'N/A')
             wind_power = data.get('wind_power', 'N/A')
+            humidity = data.get('humidity', 'N/A')
             report_time = data.get('report_time', 'N/A')
-            feels_like = data.get('feels_like', 'N/A')
-            visibility = data.get('visibility', 'N/A')
-            pressure = data.get('pressure', 'N/A')
-            uv_index = data.get('uv_index', 'N/A')
-            aqi = data.get('aqi', 'N/A')
-            pm25 = data.get('pm25', 'N/A')
-            pm10 = data.get('pm10', 'N/A')
-            co = data.get('co', 'N/A')
-            no2 = data.get('no2', 'N/A')
-            o3 = data.get('o3', 'N/A')
-            so2 = data.get('so2', 'N/A')
-            air_quality = data.get('air_quality', 'N/A')
-            sunrise = data.get('sunrise', 'N/A')
-            sunset = data.get('sunset', 'N/A')
-            precipitation = data.get('precipitation', 'N/A')
-            dew_point = data.get('dew_point', 'N/A')
-            cloud_cover = data.get('cloud_cover', 'N/A')
-            hourly_forecast = data.get('hourly_forecast', [])
-            daily_forecast = data.get('daily_forecast', [])
 
-            return f"[天气查询 - {province}{city}]\n温度: {temperature}°C (体感{feels_like}°C)\n天气: {weather}\n湿度: {humidity}%\n风向: {wind_direction}\n风力: {wind_power}\n能见度: {visibility}km\n气压: {pressure}hPa\n紫外线指数: {uv_index}\n空气质量指数: {aqi}\nPM2.5: {pm25}μg/m³\nPM10: {pm10}μg/m³\n一氧化碳: {co}mg/m³\n二氧化氮: {no2}μg/m³\n臭氧: {o3}μg/m³\n二氧化硫: {so2}μg/m³\n空气质量: {air_quality}\n日出: {sunrise}\n日落: {sunset}\n降水量: {precipitation}mm\n露点: {dew_point}°C\n云量: {cloud_cover}%\n报告时间: {report_time}"
+            return f"[天气查询 - {province}{city}]\n天气: {weather}\n天气代码: {weather_code}\n温度: {temperature}°C\n湿度: {humidity}%\n风向: {wind_direction}\n风力: {wind_power}\n报告时间: {report_time}"
 
         elif command_name == "手机归属地查询":
             if not data or 'province' not in data:
@@ -873,45 +912,31 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             province = data.get('province', 'N/A')
             city = data.get('city', 'N/A')
             sp = data.get('sp', 'N/A')
-            zip_code = data.get('zip_code', 'N/A')
-            area_code = data.get('area_code', 'N/A')
-            card_type = data.get('card_type', 'N/A')
-            company = data.get('company', 'N/A')
-            brand = data.get('brand', 'N/A')
-            province_code = data.get('province_code', 'N/A')
-            city_code = data.get('city_code', 'N/A')
-            country_code = data.get('country_code', 'N/A')
-            timezone = data.get('timezone', 'N/A')
-            latitude = data.get('latitude', 'N/A')
-            longitude = data.get('longitude', 'N/A')
-            accuracy = data.get('accuracy', 'N/A')
-            source = data.get('source', 'N/A')
-            update_time = data.get('update_time', 'N/A')
 
-            return f"[手机归属地查询]\n省份: {province}\n城市: {city}\n运营商: {sp}\n卡类型: {card_type}\n公司: {company}\n品牌: {brand}\n邮编: {zip_code}\n区号: {area_code}\n省份代码: {province_code}\n城市代码: {city_code}\n国家代码: {country_code}\n时区: {timezone}\n经纬度: {latitude}, {longitude}\n精度: {accuracy}\n数据源: {source}\n更新时间: {update_time}"
+            return f"[手机归属地查询]\n省份: {province}\n城市: {city}\n运营商: {sp}"
 
         elif command_name == "随机数生成":
             if not data or 'numbers' not in data:
                 return "随机数生成失败"
 
             numbers = data.get('numbers', [])
-            min_val = data.get('min', 'N/A')
-            max_val = data.get('max', 'N/A')
-            count = data.get('count', 'N/A')
-            allow_repeat = data.get('allow_repeat', 'N/A')
-            allow_decimal = data.get('allow_decimal', 'N/A')
-            decimal_places = data.get('decimal_places', 'N/A')
-            seed = data.get('seed', 'N/A')
-            algorithm = data.get('algorithm', 'N/A')
-            timestamp = data.get('timestamp', 'N/A')
             sum_total = sum(numbers) if numbers else 0
             average = sum_total / len(numbers) if numbers else 0
+            
+            # 计算最小值和最大值
+            min_generated = min(numbers) if numbers else 'N/A'
+            max_generated = max(numbers) if numbers else 'N/A'
 
-            numbers_str = ', '.join(map(str, numbers[:20]))  # 只显示前20个数字，避免消息过长
-            if len(numbers) > 20:
-                numbers_str += f", ...(还有{len(numbers)-20}个)"
-
-            return f"[随机数生成]\n参数: {min_val} ~ {max_val}, 生成{count}个\n允许重复: {allow_repeat}\n允许小数: {allow_decimal}\n小数位数: {decimal_places}\n种子: {seed}\n算法: {algorithm}\n生成时间: {timestamp}\n生成的随机数: {numbers_str}\n总和: {sum_total}\n平均值: {average:.2f}"
+            # 检查是否包含小数
+            has_decimals = any(isinstance(num, float) or ('.' in str(num) and not str(num).endswith('.0')) for num in numbers)
+            
+            if len(numbers) <= 10:
+                # 如果数字较少，显示全部数字
+                numbers_str = ', '.join(map(str, numbers))
+                return f"[随机数生成]\n数字类型: {'小数' if has_decimals else '整数'}\n生成数量: {len(numbers)}\n生成的随机数: {numbers_str}\n最小值: {min_generated}\n最大值: {max_generated}\n总和: {sum_total}\n平均值: {average:.2f}"
+            else:
+                # 如果数字较多，只显示统计信息
+                return f"[随机数生成]\n数字类型: {'小数' if has_decimals else '整数'}\n生成数量: {len(numbers)}\n最小值: {min_generated}\n最大值: {max_generated}\n总和: {sum_total}\n平均值: {average:.2f}"
 
         elif command_name == "ICP备案查询":
             if not data or data.get('code') != '200':
@@ -929,15 +954,16 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
                 return "未查询到IP信息"
             
             ip = data.get('ip', 'N/A')
+            beginip = data.get('beginip', 'N/A')
+            endip = data.get('endip', 'N/A')
             region = data.get('region', 'N/A')
             isp = data.get('isp', 'N/A')
             asn = data.get('asn', 'N/A')
             latitude = data.get('latitude', 'N/A')
             longitude = data.get('longitude', 'N/A')
             llc = data.get('llc', 'N/A')
-            district = data.get('district', 'N/A')
             
-            return f"[IP信息查询]\nIP地址: {ip}\n地理位置: {region}\n行政区: {district}\n运营商: {isp}\n归属机构: {llc}\nASN: {asn}\n经纬度: {latitude}, {longitude}"
+            return f"[IP信息查询]\nIP地址: {ip}\nIP段: {beginip} - {endip}\n地理位置: {region}\n运营商: {isp}\n归属机构: {llc}\nASN: {asn}\n经纬度: {latitude}, {longitude}"
 
         elif command_name == "一言":
             if not data or 'text' not in data:
@@ -979,9 +1005,6 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
         elif command_name == "摸摸头":
             return "[摸摸头]\nGIF已生成并发送"
 
-        elif command_name == "生成摸摸头GIF POST":
-            return "[生成摸摸头GIF POST]\nGIF已生成并发送"
-
         elif command_name == "每日新闻图":
             return "[每日新闻图]\n新闻图已获取并发送"
 
@@ -1004,13 +1027,14 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             return f"[图片转Base64]\nBase64数据: {base64_data[:50]}...\n状态: {msg}"
 
         elif command_name == "翻译":
-            if not data or ('translated_text' not in data and 'text' not in data):
+            if not data:
                 return "翻译失败"
             
-            source_lang = data.get('source_lang', 'N/A')
-            translated_text = data.get('translated_text', data.get('text', 'N/A'))
+            # 根据实际API返回格式调整字段名
+            original_text = data.get('text', 'N/A')
+            translated_text = data.get('translate', 'N/A')
             
-            return f"[翻译]\n原文语言: {source_lang}\n翻译结果: {translated_text}"
+            return f"[翻译]\n原文: {original_text}\n翻译结果: {translated_text}"
 
         elif command_name == "MC服务器查询":
             if not data or 'ip' not in data:
@@ -1064,31 +1088,71 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
                 games = data
             elif 'games' in data and isinstance(data['games'], list):
                 games = data['games']
-            
+
             if not games:
                 return "[Epic免费游戏]\n当前没有免费游戏"
 
-            game_list = []
-            for i, game in enumerate(games[:5], 1):  # 最多显示5个
-                if isinstance(game, dict):
-                    title = game.get('title', game.get('name', 'N/A'))
-                    description = game.get('description', '暂无描述')
-                    price = game.get('price', game.get('originalPrice', 'N/A'))
-                    end_date = game.get('end_date', game.get('expiryDate', 'N/A'))
-                    
-                    # 如果价格是数字，格式化为货币形式
-                    if isinstance(price, (int, float)):
-                        price = f"${price:.2f}"
-                    if isinstance(price, dict) and 'discountPrice' in price:
-                        price = f"${price['discountPrice']:.2f}"
-                
-                    game_list.append(f"{i}. {title} - {price} (截止: {end_date})\n   {description}")
-                else:
-                    # 如果游戏不是字典格式，直接显示
-                    game_list.append(f"{i}. {str(game)[:100]}...")
+            # 分类：当前免费和即将免费
+            current_free = []
+            upcoming_free = []
 
-            game_str = "\n".join(game_list)
-            return f"[Epic免费游戏]\n{game_str}"
+            for game in games:
+                if not isinstance(game, dict):
+                    continue
+
+                is_free_now = game.get('is_free_now', False)
+                title = game.get('title', game.get('name', 'N/A'))
+                description = game.get('description', '暂无描述').strip()
+                original_price = game.get('original_price_desc', game.get('originalPrice', 'N/A'))
+                free_start = game.get('free_start', game.get('startDate', 'N/A'))
+                free_end = game.get('free_end', game.get('endDate', 'N/A'))
+                link = game.get('link', '')
+
+                # 限制描述长度
+                if len(description) > 150:
+                    description = description[:150] + "..."
+
+                game_info = {
+                    'title': title,
+                    'description': description,
+                    'original_price': original_price,
+                    'free_start': free_start,
+                    'free_end': free_end,
+                    'link': link
+                }
+
+                if is_free_now:
+                    current_free.append(game_info)
+                else:
+                    upcoming_free.append(game_info)
+
+            # 构建返回字符串
+            result_lines = ["[Epic免费游戏]"]
+
+            if current_free:
+                result_lines.append("\n🎮 当前免费：")
+                for i, game in enumerate(current_free, 1):
+                    result_lines.append(f"{i}. {game['title']}")
+                    result_lines.append(f"   原价: {game['original_price']} | 免费截止: {game['free_end']}")
+                    result_lines.append(f"   {game['description']}")
+                    if game['link']:
+                        result_lines.append(f"   🔗 {game['link']}")
+                    result_lines.append("")
+
+            if upcoming_free:
+                result_lines.append("\n🔜 即将免费：")
+                for i, game in enumerate(upcoming_free, 1):
+                    result_lines.append(f"{i}. {game['title']}")
+                    result_lines.append(f"   原价: {game['original_price']} | 免费期间: {game['free_start']} ~ {game['free_end']}")
+                    result_lines.append(f"   {game['description']}")
+                    if game['link']:
+                        result_lines.append(f"   🔗 {game['link']}")
+                    result_lines.append("")
+
+            if not current_free and not upcoming_free:
+                result_lines.append("\n当前没有免费游戏信息")
+
+            return "\n".join(result_lines).strip()
 
         elif command_name == "MC玩家查询":
             if not data or 'username' not in data:
@@ -1209,44 +1273,65 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
                     return f"[WHOIS查询]\n{whois_data[:500]}..."  # 限制长度
                 elif isinstance(whois_data, dict):
                     # 如果是结构化JSON格式，提取关键信息
-                    domain_name = whois_data.get('domain_name', 'N/A')
-                    registrar = whois_data.get('registrar', 'N/A')
-                    registrant_name = whois_data.get('registrant_name', 'N/A')
-                    registrant_email = whois_data.get('registrant_email', 'N/A')
-                    registrant_org = whois_data.get('registrant_org', 'N/A')
-                    creation_date = whois_data.get('creation_date', 'N/A')
-                    updated_date = whois_data.get('updated_date', 'N/A')
-                    expiration_date = whois_data.get('expiration_date', 'N/A')
-                    status = whois_data.get('status', 'N/A')
-                    name_servers = whois_data.get('name_servers', [])
-                    dnssec = whois_data.get('dnssec', 'N/A')
-                    abuse_email = whois_data.get('abuse_email', 'N/A')
-                    abuse_phone = whois_data.get('abuse_phone', 'N/A')
+                    # 从嵌套结构中提取域名信息
+                    domain_info = whois_data.get('domain', {})
+                    registrar_info = whois_data.get('registrar', {})
+                    registrant_info = whois_data.get('registrant', {})
+                    
+                    domain_name = domain_info.get('domain', data.get('domain', 'N/A'))
+                    registry_domain_id = domain_info.get('id', 'N/A')
+                    whois_server = domain_info.get('whois_server', 'N/A')
+                    name_servers = domain_info.get('name_servers', [])
+                    created_date = domain_info.get('created_date', 'N/A')
+                    updated_date = domain_info.get('updated_date', 'N/A')
+                    expiration_date = domain_info.get('expiration_date', 'N/A')
+                    status_list = domain_info.get('status', [])
+                    
+                    registrar_name = registrar_info.get('name', 'N/A')
+                    registrar_id = registrar_info.get('id', 'N/A')
+                    registrar_url = registrar_info.get('referral_url', 'N/A')
+                    registrar_email = registrar_info.get('email', 'N/A')
+                    registrar_phone = registrar_info.get('phone', 'N/A')
+                    
+                    registrant_province = registrant_info.get('province', 'N/A')
+                    registrant_country = registrant_info.get('country', 'N/A')
+                    registrant_email = registrant_info.get('email', 'N/A')
 
+                    status_str = ", ".join(status_list) if status_list else "N/A"
                     ns_str = ", ".join(name_servers[:10]) if name_servers else "N/A"  # 显示前10个NS
 
-                    return f"[WHOIS查询]\n域名: {domain_name}\n注册商: {registrar}\n注册人: {registrant_name}\n注册组织: {registrant_org}\n注册邮箱: {registrant_email}\n创建时间: {creation_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status}\nDNSSEC: {dnssec}\n域名服务器: {ns_str}\n滥用邮箱: {abuse_email}\n滥用电话: {abuse_phone}"
+                    return f"[WHOIS查询]\n域名: {domain_name}\n注册局域名ID: {registry_domain_id}\n域名服务器: {ns_str}\nWHOIS服务器: {whois_server}\n注册商: {registrar_name}\n注册商ID: {registrar_id}\n注册商URL: {registrar_url}\n注册商邮箱: {registrar_email}\n注册商电话: {registrar_phone}\n注册人省份: {registrant_province}\n注册人国家: {registrant_country}\n注册人邮箱: {registrant_email}\n创建时间: {created_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status_str}"
                 else:
                     return f"[WHOIS查询]\n{str(whois_data)[:500]}..."
             else:
                 # 如果直接是WHOIS数据（没有嵌套在whois键下）
-                domain_name = data.get('domain_name', data.get('domain', 'N/A'))
-                registrar = data.get('registrar', 'N/A')
-                registrant_name = data.get('registrant_name', 'N/A')
-                registrant_email = data.get('registrant_email', 'N/A')
-                registrant_org = data.get('registrant_org', 'N/A')
-                creation_date = data.get('creation_date', 'N/A')
-                updated_date = data.get('updated_date', 'N/A')
-                expiration_date = data.get('expiration_date', 'N/A')
-                status = data.get('status', 'N/A')
-                name_servers = data.get('name_servers', [])
-                dnssec = data.get('dnssec', 'N/A')
-                abuse_email = data.get('abuse_email', 'N/A')
-                abuse_phone = data.get('abuse_phone', 'N/A')
+                domain_info = data.get('domain', data)
+                registrar_info = data.get('registrar', {})
+                registrant_info = data.get('registrant', {})
+                
+                domain_name = domain_info.get('domain', data.get('domain', 'N/A'))
+                registry_domain_id = domain_info.get('id', 'N/A')
+                whois_server = domain_info.get('whois_server', 'N/A')
+                name_servers = domain_info.get('name_servers', [])
+                created_date = domain_info.get('created_date', 'N/A')
+                updated_date = domain_info.get('updated_date', 'N/A')
+                expiration_date = domain_info.get('expiration_date', 'N/A')
+                status_list = domain_info.get('status', [])
+                
+                registrar_name = registrar_info.get('name', 'N/A')
+                registrar_id = registrar_info.get('id', 'N/A')
+                registrar_url = registrar_info.get('referral_url', 'N/A')
+                registrar_email = registrar_info.get('email', 'N/A')
+                registrar_phone = registrar_info.get('phone', 'N/A')
+                
+                registrant_province = registrant_info.get('province', 'N/A')
+                registrant_country = registrant_info.get('country', 'N/A')
+                registrant_email = registrant_info.get('email', 'N/A')
 
+                status_str = ", ".join(status_list) if status_list else "N/A"
                 ns_str = ", ".join(name_servers[:10]) if name_servers else "N/A"  # 显示前10个NS
 
-                return f"[WHOIS查询]\n域名: {domain_name}\n注册商: {registrar}\n注册人: {registrant_name}\n注册组织: {registrant_org}\n注册邮箱: {registrant_email}\n创建时间: {creation_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status}\nDNSSEC: {dnssec}\n域名服务器: {ns_str}\n滥用邮箱: {abuse_email}\n滥用电话: {abuse_phone}"
+                return f"[WHOIS查询]\n域名: {domain_name}\n注册局域名ID: {registry_domain_id}\n域名服务器: {ns_str}\nWHOIS服务器: {whois_server}\n注册商: {registrar_name}\n注册商ID: {registrar_id}\n注册商URL: {registrar_url}\n注册商邮箱: {registrar_email}\n注册商电话: {registrar_phone}\n注册人省份: {registrant_province}\n注册人国家: {registrant_country}\n注册人邮箱: {registrant_email}\n创建时间: {created_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status_str}"
 
         elif command_name == "URL可访问性":
             if not data or 'url' not in data:
@@ -1277,14 +1362,8 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
 
             return f"[端口扫描]\nIP: {ip}\n端口: {port}/{protocol}\n状态: {status_desc}"
 
-        elif command_name == "无损压缩图片":
-            return "[无损压缩图片]\n图片已压缩并发送"
-
         elif command_name == "生成你们怎么不说话了表情包":
             return "[生成你们怎么不说话了表情包]\n表情包已生成并发送"
-
-        elif command_name == "SVG转图片":
-            return "[SVG转图片]\n图片已转换并发送"
 
         elif command_name == "时间戳转换":
             if not data or 'datetime' not in data:
@@ -1317,19 +1396,6 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
 
             return f"[网页元数据提取]\n页面URL: {page_url}\n标题: {title}\n描述: {description}\n关键词: {keywords_str}\nFavicon: {favicon_url}"
 
-        elif command_name == "网页图片提取":
-            if not data or 'url' not in data:
-                return "网页图片提取失败"
-
-            url = data.get('url', 'N/A')
-            count = data.get('count', 0)
-            images = data.get('images', [])
-
-            image_list = images[:5]  # 只显示前5张图片
-            image_str = "\n".join([f"- {img}" for img in image_list])
-
-            return f"[网页图片提取]\n网页URL: {url}\n图片总数: {count}\n前几张图片:\n{image_str}"
-
         elif command_name == "程序员历史上的今天":
             if not data or 'events' not in data:
                 return "程序员历史上的今天查询失败"
@@ -1339,14 +1405,22 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             message = data.get('message', 'N/A')
 
             event_list = []
-            for i, event in enumerate(events[:5], 1):  # 只显示前5个事件
+            for i, event in enumerate(events, 1):  # 显示所有事件，不只是前5个
                 year = event.get('year', 'N/A')
                 title = event.get('title', 'N/A')
-                desc = event.get('desc', 'N/A')
-                event_list.append(f"{i}. [{year}] {title}\n   {desc}")
+                description = event.get('description', 'N/A')
+                category = event.get('category', 'N/A')
+                importance = event.get('importance', 'N/A')
+                source = event.get('source', 'N/A')
+                tags = event.get('tags', [])
+                
+                tags_str = ', '.join(tags) if tags else 'N/A'
+                
+                event_info = f"{i}. [{year}] {title}\n   📚 分类: {category}\n   ⭐ 重要性: {importance}\n   🏷️ 标签: {tags_str}\n   📖 来源: {source}\n   📝 {description}"
+                event_list.append(event_info)
 
-            event_str = "\n".join(event_list)
-            return f"[程序员历史上的今天]\n日期: {date}\n今日事件:\n{event_str}"
+            event_str = "\n\n".join(event_list)
+            return f"[程序员历史上的今天]\n📅 日期: {date}\n📊 总事件数: {len(events)}\n\n{event_str}"
 
         elif command_name == "程序员历史事件":
             if not data or 'events' not in data:
@@ -1356,14 +1430,22 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             events = data.get('events', [])
 
             event_list = []
-            for i, event in enumerate(events[:5], 1):  # 只显示前5个事件
+            for i, event in enumerate(events, 1):  # 显示所有事件，不只是前5个
                 year = event.get('year', 'N/A')
                 title = event.get('title', 'N/A')
-                desc = event.get('desc', 'N/A')
-                event_list.append(f"{i}. [{year}] {title}\n   {desc}")
+                description = event.get('description', 'N/A')
+                category = event.get('category', 'N/A')
+                importance = event.get('importance', 'N/A')
+                source = event.get('source', 'N/A')
+                tags = event.get('tags', [])
+                
+                tags_str = ', '.join(tags) if tags else 'N/A'
+                
+                event_info = f"{i}. [{year}] {title}\n   📚 分类: {category}\n   ⭐ 重要性: {importance}\n   🏷️ 标签: {tags_str}\n   📖 来源: {source}\n   📝 {description}"
+                event_list.append(event_info)
 
-            event_str = "\n".join(event_list)
-            return f"[程序员历史事件]\n日期: {date}\n历史事件:\n{event_str}"
+            event_str = "\n\n".join(event_list)
+            return f"[程序员历史事件]\n📅 日期: {date}\n📊 总事件数: {len(events)}\n\n{event_str}"
 
         elif command_name == "MD5哈希":
             if not data or 'md5' not in data:
@@ -1495,44 +1577,65 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
                     return f"[WHOIS查询]\n{whois_data[:500]}..."  # 限制长度
                 elif isinstance(whois_data, dict):
                     # 如果是结构化JSON格式，提取关键信息
-                    domain_name = whois_data.get('domain_name', 'N/A')
-                    registrar = whois_data.get('registrar', 'N/A')
-                    registrant_name = whois_data.get('registrant_name', 'N/A')
-                    registrant_email = whois_data.get('registrant_email', 'N/A')
-                    registrant_org = whois_data.get('registrant_org', 'N/A')
-                    creation_date = whois_data.get('creation_date', 'N/A')
-                    updated_date = whois_data.get('updated_date', 'N/A')
-                    expiration_date = whois_data.get('expiration_date', 'N/A')
-                    status = whois_data.get('status', 'N/A')
-                    name_servers = whois_data.get('name_servers', [])
-                    dnssec = whois_data.get('dnssec', 'N/A')
-                    abuse_email = whois_data.get('abuse_email', 'N/A')
-                    abuse_phone = whois_data.get('abuse_phone', 'N/A')
+                    # 从嵌套结构中提取域名信息
+                    domain_info = whois_data.get('domain', {})
+                    registrar_info = whois_data.get('registrar', {})
+                    registrant_info = whois_data.get('registrant', {})
+                    
+                    domain_name = domain_info.get('domain', data.get('domain', 'N/A'))
+                    registry_domain_id = domain_info.get('id', 'N/A')
+                    whois_server = domain_info.get('whois_server', 'N/A')
+                    name_servers = domain_info.get('name_servers', [])
+                    created_date = domain_info.get('created_date', 'N/A')
+                    updated_date = domain_info.get('updated_date', 'N/A')
+                    expiration_date = domain_info.get('expiration_date', 'N/A')
+                    status_list = domain_info.get('status', [])
+                    
+                    registrar_name = registrar_info.get('name', 'N/A')
+                    registrar_id = registrar_info.get('id', 'N/A')
+                    registrar_url = registrar_info.get('referral_url', 'N/A')
+                    registrar_email = registrar_info.get('email', 'N/A')
+                    registrar_phone = registrar_info.get('phone', 'N/A')
+                    
+                    registrant_province = registrant_info.get('province', 'N/A')
+                    registrant_country = registrant_info.get('country', 'N/A')
+                    registrant_email = registrant_info.get('email', 'N/A')
 
+                    status_str = ", ".join(status_list) if status_list else "N/A"
                     ns_str = ", ".join(name_servers[:10]) if name_servers else "N/A"  # 显示前10个NS
 
-                    return f"[WHOIS查询]\n域名: {domain_name}\n注册商: {registrar}\n注册人: {registrant_name}\n注册组织: {registrant_org}\n注册邮箱: {registrant_email}\n创建时间: {creation_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status}\nDNSSEC: {dnssec}\n域名服务器: {ns_str}\n滥用邮箱: {abuse_email}\n滥用电话: {abuse_phone}"
+                    return f"[WHOIS查询]\n域名: {domain_name}\n注册局域名ID: {registry_domain_id}\n域名服务器: {ns_str}\nWHOIS服务器: {whois_server}\n注册商: {registrar_name}\n注册商ID: {registrar_id}\n注册商URL: {registrar_url}\n注册商邮箱: {registrar_email}\n注册商电话: {registrar_phone}\n注册人省份: {registrant_province}\n注册人国家: {registrant_country}\n注册人邮箱: {registrant_email}\n创建时间: {created_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status_str}"
                 else:
                     return f"[WHOIS查询]\n{str(whois_data)[:500]}..."
             else:
                 # 如果直接是WHOIS数据（没有嵌套在whois键下）
-                domain_name = data.get('domain_name', data.get('domain', 'N/A'))
-                registrar = data.get('registrar', 'N/A')
-                registrant_name = data.get('registrant_name', 'N/A')
-                registrant_email = data.get('registrant_email', 'N/A')
-                registrant_org = data.get('registrant_org', 'N/A')
-                creation_date = data.get('creation_date', 'N/A')
-                updated_date = data.get('updated_date', 'N/A')
-                expiration_date = data.get('expiration_date', 'N/A')
-                status = data.get('status', 'N/A')
-                name_servers = data.get('name_servers', [])
-                dnssec = data.get('dnssec', 'N/A')
-                abuse_email = data.get('abuse_email', 'N/A')
-                abuse_phone = data.get('abuse_phone', 'N/A')
+                domain_info = data.get('domain', data)
+                registrar_info = data.get('registrar', {})
+                registrant_info = data.get('registrant', {})
+                
+                domain_name = domain_info.get('domain', data.get('domain', 'N/A'))
+                registry_domain_id = domain_info.get('id', 'N/A')
+                whois_server = domain_info.get('whois_server', 'N/A')
+                name_servers = domain_info.get('name_servers', [])
+                created_date = domain_info.get('created_date', 'N/A')
+                updated_date = domain_info.get('updated_date', 'N/A')
+                expiration_date = domain_info.get('expiration_date', 'N/A')
+                status_list = domain_info.get('status', [])
+                
+                registrar_name = registrar_info.get('name', 'N/A')
+                registrar_id = registrar_info.get('id', 'N/A')
+                registrar_url = registrar_info.get('referral_url', 'N/A')
+                registrar_email = registrar_info.get('email', 'N/A')
+                registrar_phone = registrar_info.get('phone', 'N/A')
+                
+                registrant_province = registrant_info.get('province', 'N/A')
+                registrant_country = registrant_info.get('country', 'N/A')
+                registrant_email = registrant_info.get('email', 'N/A')
 
+                status_str = ", ".join(status_list) if status_list else "N/A"
                 ns_str = ", ".join(name_servers[:10]) if name_servers else "N/A"  # 显示前10个NS
 
-                return f"[WHOIS查询]\n域名: {domain_name}\n注册商: {registrar}\n注册人: {registrant_name}\n注册组织: {registrant_org}\n注册邮箱: {registrant_email}\n创建时间: {creation_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status}\nDNSSEC: {dnssec}\n域名服务器: {ns_str}\n滥用邮箱: {abuse_email}\n滥用电话: {abuse_phone}"
+                return f"[WHOIS查询]\n域名: {domain_name}\n注册局域名ID: {registry_domain_id}\n域名服务器: {ns_str}\nWHOIS服务器: {whois_server}\n注册商: {registrar_name}\n注册商ID: {registrar_id}\n注册商URL: {registrar_url}\n注册商邮箱: {registrar_email}\n注册商电话: {registrar_phone}\n注册人省份: {registrant_province}\n注册人国家: {registrant_country}\n注册人邮箱: {registrant_email}\n创建时间: {created_date}\n更新时间: {updated_date}\n到期时间: {expiration_date}\n状态: {status_str}"
 
         elif command_name == "URL可访问性":
             if not data or 'url' not in data:
@@ -1574,48 +1677,7 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             
             return f"[MC玩家查询]\n用户名: {username}\nUUID: {uuid}\n皮肤URL: {skin_url}"
 
-        elif command_name == "MC曾用名查询":
-            if not data or 'history' not in data:
-                return "未查询到曾用名信息"
-            
-            current_name = data.get('id', 'N/A')
-            uuid = data.get('uuid', 'N/A')
-            name_num = data.get('name_num', 'N/A')
-            history = data.get('history', [])
-            
-            name_list = []
-            for item in history:
-                name = item.get('name', 'N/A')
-                changed_time = item.get('changedToAt', 'N/A')
-                if changed_time != 'N/A':
-                    # 将时间戳转换为可读格式
-                    try:
-                        import datetime
-                        readable_time = datetime.datetime.fromtimestamp(changed_time/1000).strftime('%Y-%m-%d %H:%M:%S')
-                        name_list.append(f"  - {name} (变更为: {readable_time})")
-                    except:
-                        name_list.append(f"  - {name} (时间戳: {changed_time})")
-                else:
-                    name_list.append(f"  - {name}")
-            
-            name_str = "\n".join(name_list)
-            return f"[MC曾用名查询]\n当前用户名: {current_name}\nUUID: {uuid}\n历史用户名数: {name_num}\n历史用户名:\n{name_str}"
 
-        elif command_name == "文本分析":
-            if not data:
-                return "文本分析失败"
-
-            # 根据实际API响应数据结构进行格式化
-            original_text = data.get('original_text', 'N/A')
-            total_chars_unicode = data.get('total_chars_unicode', 'N/A')
-            total_bytes = data.get('total_bytes', 'N/A')
-            chinese_chars = data.get('chinese_chars', 'N/A')
-            english_letters = data.get('english_letters', 'N/A')
-            numbers = data.get('numbers', 'N/A')
-            punctuation_marks = data.get('punctuation_marks', 'N/A')
-            whitespace_chars = data.get('whitespace_chars', 'N/A')
-            
-            return f"[文本分析]\nUnicode字符数: {total_chars_unicode}\n字节数: {total_bytes}\n中文字符: {chinese_chars}\n英文字符: {english_letters}\n数字: {numbers}\n标点符号: {punctuation_marks}\n空白字符: {whitespace_chars}"
 
         elif command_name == "程序员历史上的今天":
             if not data or 'events' not in data:
@@ -1626,14 +1688,22 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
             message = data.get('message', 'N/A')
 
             event_list = []
-            for i, event in enumerate(events[:5], 1):  # 只显示前5个事件
+            for i, event in enumerate(events, 1):  # 显示所有事件，不只是前5个
                 year = event.get('year', 'N/A')
                 title = event.get('title', 'N/A')
-                desc = event.get('desc', 'N/A')
-                event_list.append(f"{i}. [{year}] {title}\n   {desc}")
+                description = event.get('description', 'N/A')
+                category = event.get('category', 'N/A')
+                importance = event.get('importance', 'N/A')
+                source = event.get('source', 'N/A')
+                tags = event.get('tags', [])
+                
+                tags_str = ', '.join(tags) if tags else 'N/A'
+                
+                event_info = f"{i}. [{year}] {title}\n   📚 分类: {category}\n   ⭐ 重要性: {importance}\n   🏷️ 标签: {tags_str}\n   📖 来源: {source}\n   📝 {description}"
+                event_list.append(event_info)
 
-            event_str = "\n".join(event_list)
-            return f"[程序员历史上的今天]\n日期: {date}\n今日事件:\n{event_str}"
+            event_str = "\n\n".join(event_list)
+            return f"[程序员历史上的今天]\n📅 日期: {date}\n📊 总事件数: {len(events)}\n\n{event_str}"
 
         elif command_name == "网页元数据提取":
             if not data or 'page_url' not in data:
@@ -1662,19 +1732,6 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
 
             return f"[网页元数据提取]\n页面URL: {page_url}\n标题: {title}\n描述: {description}\n关键词: {keywords_str}\n语言: {language}\n作者: {author}\n发布时间: {published_time}\n规范URL: {canonical_url}\n生成器: {generator}\nFavicon: {favicon_url}{og_info}"
 
-        elif command_name == "网页图片提取":
-            if not data or 'url' not in data:
-                return "网页图片提取失败"
-
-            url = data.get('url', 'N/A')
-            count = data.get('count', 0)
-            images = data.get('images', [])
-
-            image_list = images[:5]  # 只显示前5张图片
-            image_str = "\n".join([f"- {img}" for img in image_list])
-
-            return f"[网页图片提取]\n网页URL: {url}\n图片总数: {count}\n前几张图片:\n{image_str}"
-
         elif command_name == "时间戳转换":
             if not data or 'datetime' not in data:
                 return "时间戳转换失败"
@@ -1692,14 +1749,8 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
 
             return f"[JSON格式化]\n{formatted_content}"
 
-        elif command_name == "无损压缩图片":
-            return "[无损压缩图片]\n图片已压缩并发送"
-
         elif command_name == "生成你们怎么不说话了表情包":
             return "[生成你们怎么不说话了表情包]\n表情包已生成并发送"
-
-        elif command_name == "SVG转图片":
-            return "[SVG转图片]\n图片已转换并发送"
 
         else:
             # 默认格式化，直接返回原始数据的字符串表示
@@ -1723,252 +1774,681 @@ def format_uapi_response(command_name: str, data: Any, config: Dict[str, Any]) -
 
 # UAPI命令帮助信息字典
 UAPI_COMMAND_HELP = {
-    "B站直播间查询": """【B站直播间查询 帮助】
-功能：查询B站直播间信息
-用法：B站直播间查询 [mid|room_id] [ID值]
-示例：B站直播间查询 672328094
-示例：B站直播间查询 room_id 22637261
-参数说明：
-- mid: B站用户ID
-- room_id: 直播间ID""",
+"B站直播间查询": """【B站直播间查询 帮助】
+功能：查询B站直播间的详细信息
+用法：B站直播间查询 [mid] 或 B站直播间查询 room_id [room_id]
+参数详解：
+- mid: B站用户ID（可选参数）
+  * 用户的唯一数字标识符
+  * 如：672328094（某主播的UID）
+  * 查询该用户的直播间信息
+- room_id: 直播间ID（可选参数）
+  * 直播间的唯一数字标识符
+  * 如：22637261（某个直播间的房间号）
+  * 直接查询指定直播间
+使用说明：
+- 两种查询方式任选其一
+- 如果同时提供两个参数，优先使用room_id
+- 返回信息包括：直播间标题、主播信息、在线人数、直播状态等
+使用示例：
+- B站直播间查询 672328094
+- B站直播间查询 room_id 22637261
+注意事项：
+- 需要有效的B站用户ID或直播间ID
+- 直播间ID通常比用户ID更容易获得
+- 离线直播间也能查询基本信息""",
 
-    "B站用户查询": """【B站用户查询 帮助】
-功能：查询B站用户信息
+"B站用户查询": """【B站用户查询 帮助】
+功能：查询B站用户的详细个人信息
 用法：B站用户查询 [UID]
-示例：B站用户查询 483307278
-参数说明：
-- UID: B站用户唯一标识符""",
+参数详解：
+- UID: B站用户唯一标识符（必选参数）
+  * 用户的数字ID，如483307278
+  * 可在B站用户主页URL中找到
+  * 也可通过其他方式获取
+返回信息包含：
+- 用户昵称和头像
+- 用户签名和个人简介
+- 关注数和粉丝数
+- 性别信息
+- 等级和认证信息
+- 注册时间和生日
+使用示例：
+- B站用户查询 483307278
+- B站用户查询 282994
+注意事项：
+- UID必须是有效的数字ID
+- 部分隐私信息可能无法获取
+- 被注销或封禁的账号可能查询失败""",
 
-    "B站投稿查询": """【B站投稿查询 帮助】
-功能：查询B站用户投稿视频
+"B站投稿查询": """【B站投稿查询 帮助】
+功能：查询B站用户的历史投稿视频列表
 用法：B站投稿查询 [mid]
-示例：B站投稿查询 483307278
-参数说明：
-- mid: B站用户ID""",
+参数详解：
+- mid: B站用户ID（必选参数）
+  * 用户的唯一数字标识符
+  * 如：483307278
+  * 可在B站用户主页找到
+返回信息包含：
+- 最新投稿的视频列表
+- 视频标题和封面
+- 播放量、点赞数、评论数
+- 投稿时间
+- 视频时长
+- 分区信息
+使用示例：
+- B站投稿查询 483307278
+- B站投稿查询 282994
+适用场景：
+- 了解UP主的创作历史
+- 查看最受欢迎的作品
+- 研究内容创作趋势
+注意事项：
+- 只返回公开的投稿视频
+- 按时间倒序排列
+- 默认返回最新的一些投稿""",
 
-    "GitHub仓库查询": """【GitHub仓库查询 帮助】
-功能：查询GitHub仓库信息
+"GitHub仓库查询": """【GitHub仓库查询 帮助】
+功能：查询GitHub开源仓库的详细信息
 用法：GitHub仓库查询 [owner] [repo]
-示例：GitHub仓库查询 torvalds linux
-参数说明：
-- owner: 仓库拥有者
-- repo: 仓库名称""",
+参数详解：
+- owner: 仓库拥有者（必选参数）
+  * GitHub用户名或组织名
+  * 如：torvalds（Linus Torvalds）
+  * microsoft、google等组织
+- repo: 仓库名称（必选参数）
+  * 仓库的具体名称
+  * 如：linux（Linux内核）
+  * react、vue等项目名
+返回信息包含：
+- 仓库基本信息（名称、描述、创建时间）
+- Star数量和Fork数量
+- 语言统计和大小
+- 最后更新时间
+- 许可证信息
+- Issues和Pull Requests数量
+使用示例：
+- GitHub仓库查询 torvalds linux
+- GitHub仓库查询 facebook react
+- GitHub仓库查询 microsoft vscode
+适用场景：
+- 了解开源项目信息
+- 评估项目活跃度
+- 查看技术栈和贡献情况
+注意事项：
+- 需要正确的用户名和仓库名
+- 私有仓库无法查询
+- 遵守GitHub API使用限制""",
 
-    "热榜查询": """【热榜查询 帮助】
-功能：查询各平台热榜
+"热榜查询": """【热榜查询 帮助】
+功能：查询各大平台的实时热门榜单
 用法：热榜查询 [type]
-示例：热榜查询 weibo
-示例：热榜查询 zhihu
-参数说明：
-- type: 平台类型
-支持平台：weibo, zhihu, baidu, toutiao, douban-movie, tieba, acfun, bilibili等""",
+参数详解：
+- type: 平台类型（可选参数，默认返回微博热榜）
+  * weibo：新浪微博热搜榜
+  * zhihu：知乎热榜
+  * baidu：百度热搜榜
+  * toutiao：今日头条热榜
+  * douban-movie：豆瓣电影排行榜
+  * tieba：百度贴吧热议榜
+  * acfun：AcFun热榜
+  * bilibili：哔哩哔哩热榜
+返回信息包含：
+- 排名前50的热门话题/内容
+- 标题和简要描述
+- 热度指数或浏览量
+- 更新时间
+使用示例：
+- 热榜查询
+- 热榜查询 weibo
+- 热榜查询 zhihu
+- 热榜查询 baidu
+适用场景：
+- 了解时事热点
+- 追踪网络流行趋势
+- 获取热门话题讨论
+注意事项：
+- 不同平台更新频率不同
+- 部分平台可能存在地域限制
+- 数据来源于公开接口""",
 
-    "世界时间查询": """【世界时间查询 帮助】
-功能：查询世界时间
+"世界时间查询": """【世界时间查询 帮助】
+功能：查询世界各地的当前时间
 用法：世界时间查询 [city]
-示例：世界时间查询 Asia/Shanghai
-示例：世界时间查询 Europe/London
-参数说明：
-- city: 时区名称（IANA标准）""",
+参数详解：
+- city: 时区名称（可选参数，默认Asia/Shanghai）
+  * 使用IANA时区数据库标准
+  * 格式：大洲/城市
+  * 如：Asia/Shanghai（上海）
+  * Europe/London（伦敦）
+  * America/New_York（纽约）
+常用时区示例：
+- Asia/Shanghai：中国标准时间
+- Asia/Tokyo：日本标准时间
+- Europe/London：英国时间
+- America/New_York：美国东部时间
+- America/Los_Angeles：美国西部时间
+返回信息包含：
+- 当前日期和时间
+- 时区信息
+- 与UTC的时间差
+- 是否处于夏令时
+使用示例：
+- 世界时间查询
+- 世界时间查询 Asia/Shanghai
+- 世界时间查询 Europe/London
+- 世界时间查询 America/New_York
+注意事项：
+- 时区名称区分大小写
+- 支持主要城市和时区
+- 时间基于网络时间同步""",
 
-    "天气查询": """【天气查询 帮助】
-功能：查询天气信息
+"天气查询": """【天气查询 帮助】
+功能：查询指定城市的当前天气状况
 用法：天气查询 [city]
-示例：天气查询 北京
-示例：天气查询 上海
-参数说明：
-- city: 城市名称""",
+参数详解：
+- city: 城市名称（必选参数）
+  * 支持中文城市名：北京、上海、广州
+  * 支持拼音：beijing、shanghai
+  * 支持英文：Beijing、Shanghai
+  * 支持城市代码
+返回信息包含：
+- 当前温度和体感温度
+- 天气状况描述（晴、雨、雪等）
+- 湿度和风力信息
+- 能见度和气压
+- 空气质量指数
+使用示例：
+- 天气查询 北京
+- 天气查询 上海
+- 天气查询 guangzhou
+- 天气查询 New York
+注意事项：
+- 支持国内外主要城市
+- 城市名称尽量准确
+- 返回数据基于实时气象信息""",
 
-    "手机归属地查询": """【手机归属地查询 帮助】
-功能：查询手机号归属地
+"手机归属地查询": """【手机归属地查询 帮助】
+功能：查询中国大陆手机号码的归属地信息
 用法：手机归属地查询 [phone]
-示例：手机归属地查询 13800138000
-参数说明：
-- phone: 11位手机号码""",
+参数详解：
+- phone: 11位手机号码（必选参数）
+  * 必须是中国大陆手机号
+  * 格式：11位数字，如13800138000
+  * 支持移动、联通、电信等运营商
+返回信息包含：
+- 手机号码段信息
+- 归属地省市
+- 运营商信息
+- 邮政编码
+- 区号信息
+使用示例：
+- 手机归属地查询 13800138000
+- 手机归属地查询 15912345678
+- 手机归属地查询 18888888888
+适用范围：
+- 仅支持中国大陆手机号码
+- 港澳台地区号码暂不支持
+- 虚拟运营商号码可能查询不准确
+注意事项：
+- 号码必须完整且有效
+- 数据来源于公开数据库
+- 仅供参考，实际情况可能有变化""",
 
-    "随机数生成": """【随机数生成 帮助】
-功能：生成随机数
-用法：随机数生成 [min] [max] [count]
-示例：随机数生成 1 100 5
-示例：随机数生成 10 20
-参数说明：
-- min: 最小值
-- max: 最大值
-- count: 生成数量""",
+"随机数生成": """【随机数生成 帮助】
+功能：生成指定范围内的随机数
+用法：随机数生成 [min] [max] [count] [allow_repeat] [allow_decimal] [decimal_places]
+参数详解：
+- min: 最小值（必选参数）
+  * 数字范围的下限
+  * 可以为负数
+  * 如：1、-100、0
+- max: 最大值（必选参数）
+  * 数字范围的上限
+  * 必须大于最小值
+  * 如：100、1000、50
+- count: 生成数量（可选参数，默认1）
+  * 要生成的随机数个数
+  * 范围：1-100
+- allow_repeat: 是否允许重复（可选参数，默认true）
+  * true：允许生成重复数字
+  * false：不允许重复（数量不能超过范围）
+- allow_decimal: 是否允许小数（可选参数，默认false）
+  * true：生成小数
+  * false：生成整数
+- decimal_places: 小数位数（可选参数，默认2）
+  * 当allow_decimal为true时生效
+  * 范围：1-10
+使用示例：
+- 随机数生成 1 100
+- 随机数生成 1 100 5 true false 2
+- 随机数生成 10 20 10
+- 随机数生成 -50 50 5 false
+- 随机数生成 0 1 1 true true 3
+应用场景：
+- 抽奖活动
+- 随机分组
+- 游戏数值生成
+- 统计抽样
+注意事项：
+- 最大值必须大于最小值
+- 不允许重复时数量不能超过范围
+- 小数位数最多10位""",
 
-    "ICP备案查询": """【ICP备案查询 帮助】
-功能：查询域名ICP备案信息
+"ICP备案查询": """【ICP备案查询 帮助】
+功能：查询域名在中国的ICP备案信息
 用法：ICP备案查询 [domain]
-示例：ICP备案查询 baidu.com
-参数说明：
-- domain: 域名""",
+参数详解：
+- domain: 域名（必选参数）
+  * 完整域名，如baidu.com
+  * 支持二级域名，如www.baidu.com
+  * 不需要包含http://或https://
+返回信息包含：
+- 备案号
+- 主办单位名称
+- 主办单位性质
+- 网站名称
+- 审核时间
+- 备案状态
+使用示例：
+- ICP备案查询 baidu.com
+- ICP备案查询 www.taobao.com
+- ICP备案查询 qq.com
+注意事项：
+- 数据来源于工信部备案系统
+- 查询结果仅供参考
+- 备案信息可能有延迟更新""",
 
-    "IP信息查询": """【IP信息查询 帮助】
-功能：查询IP地理位置
+"IP信息查询": """【IP信息查询 帮助】
+功能：查询IP地址或域名的地理位置信息
 用法：IP信息查询 [ip|domain]
-示例：IP信息查询 8.8.8.8
-示例：IP信息查询 baidu.com
-参数说明：
-- ip|domain: IP地址或域名""",
+参数详解：
+- ip|domain: IP地址或域名（必选参数）
+  * IP地址格式：如8.8.8.8、114.114.114.114
+  * 域名格式：如baidu.com、google.com
+  * 支持IPv4和IPv6地址
+返回信息包含：
+- 国家和地区信息
+- 省市位置
+- 运营商信息
+- 经纬度坐标
+- 时区信息
+使用示例：
+- IP信息查询 8.8.8.8
+- IP信息查询 baidu.com
+- IP信息查询 114.114.114.114
+- IP信息查询 github.com
+适用场景：
+- 网络故障排查
+- 访问来源分析
+- 地理位置验证
+- 网络安全检测
+注意事项：
+- 查询频率可能有限制
+- 部分CDN节点位置可能不准确
+- 内网IP无法查询地理位置""",
 
-    "WHOIS查询": """【WHOIS查询 帮助】
-功能：查询域名WHOIS信息
+"WHOIS查询": """【WHOIS查询 帮助】
+功能：查询域名的注册和管理信息
 用法：WHOIS查询 [domain] [format]
-示例：WHOIS查询 google.com
-示例：WHOIS查询 google.com json
-参数说明：
-- domain: 域名
-- format: 格式（text/json）""",
+参数详解：
+- domain: 域名（必选参数）
+  * 完整域名，如google.com
+  * 支持各种顶级域名
+  * 不需要包含www前缀
+- format: 返回格式（可选参数，默认json）
+  * json：结构化JSON格式（推荐）
+  * text：纯文本格式
+返回信息包含：
+- 域名注册商信息
+- 注册和到期时间
+- 域名状态
+- DNS服务器信息
+- 注册人联系信息（部分隐藏）
+使用示例：
+- WHOIS查询 google.com
+- WHOIS查询 baidu.com json
+- WHOIS查询 github.com text
+适用场景：
+- 域名信息核查
+- 域名到期提醒
+- 域名纠纷处理
+- 网络安全调查
+注意事项：
+- 部分敏感信息会被隐私保护隐藏
+- 不同注册商返回信息格式可能差异
+- 查询过于频繁可能被限制""",
 
-    "Ping主机": """【Ping主机 帮助】
-功能：Ping测试主机连通性
+"Ping主机": """【Ping主机 帮助】
+功能：测试目标主机的网络连通性和响应时间
 用法：Ping主机 [host]
-示例：Ping主机 google.com
-示例：Ping主机 8.8.8.8
-参数说明：
-- host: 主机地址或IP""",
+参数详解：
+- host: 主机地址或IP（必选参数）
+  * 域名格式：如google.com、baidu.com
+  * IP地址格式：如8.8.8.8、114.114.114.114
+  * 支持IPv4和IPv6
+返回信息包含：
+- Ping包传输统计
+- 平均响应时间
+- 丢包率
+- 最小/最大/平均延迟
+使用示例：
+- Ping主机 google.com
+- Ping主机 8.8.8.8
+- Ping主机 baidu.com
+- Ping主机 114.114.114.114
+适用场景：
+- 网络连通性测试
+- 网络延迟测量
+- 服务器状态检查
+- 网络故障诊断
+注意事项：
+- 部分主机可能禁用Ping响应
+- 防火墙可能阻止Ping请求
+- 结果受网络环境影响""",
 
-    "DNS查询": """【DNS查询 帮助】
-功能：查询DNS记录
+"DNS查询": """【DNS查询 帮助】
+功能：查询域名的各种DNS记录信息
 用法：DNS查询 [domain] [type]
-示例：DNS查询 google.com A
-示例：DNS查询 google.com MX
-参数说明：
-- domain: 域名
-- type: 记录类型（A, AAAA, CNAME, MX, NS, TXT）""",
+参数详解：
+- domain: 域名（必选参数）
+  * 完整域名，如google.com
+  * 支持子域名，如www.google.com
+  * 不需要包含协议前缀
+- type: 记录类型（可选参数，默认A记录）
+  * A：IPv4地址记录
+  * AAAA：IPv6地址记录
+  * CNAME：别名记录
+  * MX：邮件交换记录
+  * NS：域名服务器记录
+  * TXT：文本记录
+  * SRV：服务记录
+返回信息包含：
+- 记录类型和值
+- TTL（生存时间）
+- 优先级（MX记录）
+- 多个记录的完整列表
+使用示例：
+- DNS查询 google.com
+- DNS查询 google.com A
+- DNS查询 google.com MX
+- DNS查询 baidu.com NS
+- DNS查询 qq.com TXT
+应用场景：
+- 域名解析问题排查
+- 邮件服务器配置验证
+- CDN配置检查
+- 网络安全分析
+注意事项：
+- 不同记录类型返回格式不同
+- 部分记录可能被CDN服务商修改
+- DNS缓存可能影响查询结果""",
 
-    "URL可访问性": """【URL可访问性 帮助】
-功能：检查URL可访问性
+"URL可访问性": """【URL可访问性 帮助】
+功能：检查指定URL的可访问性和响应状态
 用法：URL可访问性 [url]
-示例：URL可访问性 https://www.baidu.com
-参数说明：
-- url: 完整URL地址""",
+参数详解：
+- url: 完整URL地址（必选参数）
+  * 必须包含协议：http://或https://
+  * 完整格式：https://www.example.com
+  * 支持带路径和参数的URL
+返回信息包含：
+- HTTP状态码
+- 响应时间
+- 服务器响应头信息
+- 页面标题（如果可获取）
+- 错误详情（如访问失败）
+使用示例：
+- URL可访问性 https://www.baidu.com
+- URL可访问性 https://github.com
+- URL可访问性 http://httpbin.org/status/200
+- URL可访问性 https://www.nonexistent-domain.com
+适用场景：
+- 网站状态监控
+- 接口可用性检查
+- 网络连通性测试
+- 故障排查辅助
+注意事项：
+- 必须提供完整URL（包含协议）
+- 可能受到防火墙或网络策略限制
+- 重定向会影响响应时间""",
 
-    "端口扫描": """【端口扫描 帮助】
-功能：扫描端口状态
+"端口扫描": """【端口扫描 帮助】
+功能：扫描目标主机指定端口的开放状态
 用法：端口扫描 [host] [port] [protocol]
-示例：端口扫描 127.0.0.1 80
-示例：端口扫描 google.com 443 tcp
-参数说明：
-- host: 主机地址
-- port: 端口号
-- protocol: 协议（tcp/udp）""",
+参数详解：
+- host: 主机地址（必选参数）
+  * IP地址：如127.0.0.1、192.168.1.1
+  * 域名：如google.com、localhost
+- port: 端口号（必选参数）
+  * 常用端口：80(HTTP)、443(HTTPS)、22(SSH)
+  * 端口范围：1-65535
+- protocol: 协议（可选参数，默认tcp）
+  * tcp：传输控制协议
+  * udp：用户数据报协议
+返回信息包含：
+- 端口状态（开放/关闭/过滤）
+- 服务类型（如HTTP、SSH等）
+- 响应时间
+- 详细错误信息（如连接失败）
+使用示例：
+- 端口扫描 127.0.0.1 80
+- 端口扫描 google.com 443 tcp
+- 端口扫描 8.8.8.8 53 udp
+- 端口扫描 baidu.com 22
+常见端口说明：
+- 21：FTP文件传输
+- 22：SSH安全壳
+- 23：Telnet远程登录
+- 25：SMTP邮件传输
+- 53：DNS域名解析
+- 80：HTTP网页服务
+- 443：HTTPS加密网页
+- 3306：MySQL数据库
+注意事项：
+- 未经授权扫描他人服务器可能违法
+- 扫描速度和频率有限制
+- 防火墙可能阻止扫描请求
+- 仅用于合法的安全测试""",
 
-    "MC服务器查询": """【MC服务器查询 帮助】
-功能：查询Minecraft服务器状态
+"MC服务器查询": """【MC服务器查询 帮助】
+功能：查询Minecraft服务器的实时状态和信息
 用法：MC服务器查询 [server]
-示例：MC服务器查询 mc.hypixel.net
-示例：MC服务器查询 localhost:25565
-参数说明：
-- server: 服务器地址""",
+参数详解：
+- server: 服务器地址（必选参数）
+  * 完整地址格式：mc.hypixel.net
+  * 带端口号：localhost:25565
+  * IP地址格式：127.0.0.1:25565
+  * 默认端口为25565，可省略
+返回信息包含：
+- 服务器在线状态
+- 当前在线玩家数
+- 服务器最大玩家容量
+- 服务器版本信息
+- 服务器描述/欢迎信息
+- 延迟时间
+使用示例：
+- MC服务器查询 mc.hypixel.net
+- MC服务器查询 play.minesuperior.com
+适用场景：
+- 检查服务器是否在线
+- 查看服务器负载情况
+- 验证服务器版本兼容性
+- 监控服务器状态
+注意事项：
+- 服务器必须开启查询功能
+- 部分服务器可能禁用状态查询
+- 网络延迟影响响应时间
+- 只能查询Java版Minecraft服务器""",
 
-    "Steam用户查询": """【Steam用户查询 帮助】
-功能：查询Steam用户信息
+"Steam用户查询": """【Steam用户查询 帮助】
+功能：查询Steam用户的公开个人信息
 用法：Steam用户查询 [steamid]
-示例：Steam用户查询 76561197960435530
-参数说明：
-- steamid: Steam用户ID""",
+参数详解：
+- steamid: Steam用户ID（必选参数）
+  * 64位SteamID格式：76561197960435530
+  * Steam自定义URL：如customurl
+  * 社区ID：如123456789
+返回信息包含：
+- 用户昵称和头像
+- 用户等级
+- 好友数量
+- 游戏总时长
+- 最近游玩的游戏
+- 账号创建时间
+- 在线状态
+使用示例：
+- Steam用户查询 76561197960435530
+- Steam用户查询 customurl
+适用场景：
+- 查看朋友游戏信息
+- 验证用户身份
+- 了解游戏偏好
+- 社交互动参考
+注意事项：
+- 只能查询公开资料
+- 隐私设置会影响可见信息
+- 部分信息可能不完整
+- 需要有效的SteamID""",
 
-    "Epic免费游戏": """【Epic免费游戏 帮助】
-功能：查询Epic免费游戏
+"Epic免费游戏": """【Epic免费游戏 帮助】
+功能：查询Epic游戏商城当前和未来的免费游戏
 用法：Epic免费游戏
-示例：Epic免费游戏""",
+功能说明：
+此命令无需参数，直接执行即可
+返回信息包含：
+- 当前免费游戏列表
+- 游戏名称和封面图片
+- 原价和折扣信息
+- 免费领取截止时间
+- 游戏简介和评分
+- 下周即将免费的游戏预告
+使用示例：
+- Epic免费游戏
+适用场景：
+- 获取免费游戏信息
+- 规划游戏领取时间
+- 了解游戏优惠活动
+- 发现新游戏
+注意事项：
+- 免费游戏每周更新
+- 领取有时间限制
+- 部分地区可能不可用
+- 需要登录Epic账户才能领取""",
 
-    "MC玩家查询": """【MC玩家查询 帮助】
-功能：查询Minecraft玩家信息
+"MC玩家查询": """【MC玩家查询 帮助】
+功能：查询Minecraft玩家的基本信息和皮肤
 用法：MC玩家查询 [username]
-示例：MC玩家查询 Notch
-参数说明：
-- username: 玩家名""",
+参数详解：
+- username: 玩家名（必选参数）
+  * Minecraft官方用户名
+  * 区分大小写
+  * 如：Notch、Dream、Technoblade
+返回信息包含：
+- 玩家UUID
+- 玩家皮肤头像
+- 玩家披风信息
+- 账号状态
+- 历史用户名记录
+使用示例：
+- MC玩家查询 Notch
+- MC玩家查询 Dream
+- MC玩家查询 Technoblade
+适用场景：
+- 验证玩家身份
+- 获取玩家皮肤
+- 查看账号信息
+- 玩家社区互动
+注意事项：
+- 需要是正版Minecraft账号
+- 用户名必须准确
+- 部分信息可能涉及隐私
+- 仅支持Java版玩家查询""",
 
-    "MC曾用名查询": """【MC曾用名查询 帮助】
-功能：查询Minecraft玩家曾用名
-用法：MC曾用名查询 [name|uuid]
-示例：MC曾用名查询 Notch
-参数说明：
-- name|uuid: 玩家名或UUID""",
 
-    "文本分析": """【文本分析 帮助】
-功能：分析文本统计信息
-用法：文本分析 [text]
-示例：文本分析 这是一段测试文本
-参数说明：
-- text: 要分析的文本""",
-
-    "MD5哈希": """【MD5哈希 帮助】
+"MD5哈希": """【MD5哈希 帮助】
 功能：计算MD5哈希值
 用法：MD5哈希 [text]
-示例：MD5哈希 hello world
+示例：MD5哈希 'hello world'
+示例：MD5哈希 hello
 参数说明：
-- text: 要计算哈希的文本""",
+- text: 要计算哈希的文本（可用单引号括起来以支持带空格的文本）""",
 
 
 
-    "MD5校验": """【MD5校验 帮助】
+"MD5校验": """【MD5校验 帮助】
 功能：校验MD5哈希值
 用法：MD5校验 [text] [hash]
-示例：MD5校验 hello world 5d41402abc4b2a76b9719d911017c592
+示例：MD5校验 'hello world' 5d41402abc4b2a76b9719d911017c592
+示例：MD5校验 hello 5d41402abc4b2a76b9719d911017c592
 参数说明：
-- text: 原文
+- text: 原文（可用单引号括起来以支持带空格的文本）
 - hash: MD5哈希值""",
 
-    "Base64编码": """【Base64编码 帮助】
+"Base64编码": """【Base64编码 帮助】
 功能：Base64编码
 用法：Base64编码 [text]
-示例：Base64编码 hello world
+示例：Base64编码 'hello world'
+示例：Base64编码 hello
 参数说明：
-- text: 要编码的文本""",
+- text: 要编码的文本（可用单引号括起来以支持带空格的文本）""",
 
-    "Base64解码": """【Base64解码 帮助】
+"Base64解码": """【Base64解码 帮助】
 功能：Base64解码
 用法：Base64解码 [text]
-示例：Base64解码 aGVsbG8gd29ybGQ=
+示例：Base64解码 'aGVsbG8gd29ybGQ='
+示例：Base64解码 aGVsbG8=
 参数说明：
-- text: 要解码的Base64文本""",
+- text: 要解码的Base64文本（可用单引号括起来以支持带空格的文本）""",
 
-    "AES加密": """【AES加密 帮助】
+"AES加密": """【AES加密 帮助】
 功能：AES加密
 用法：AES加密 [key] [text]
-示例：AES加密 mypassword hello world
+示例：AES加密 mypassword 'hello world'
+示例：AES加密 mypassword hello
 参数说明：
 - key: 加密密钥
-- text: 要加密的文本""",
+- text: 要加密的文本（可用单引号括起来以支持带空格的文本）""",
 
-    "AES解密": """【AES解密 帮助】
+"AES解密": """【AES解密 帮助】
 功能：AES解密
 用法：AES解密 [key] [ciphertext] [nonce]
-示例：AES解密 mypassword encrypted_text nonce123
+示例：AES解密 mypassword 'encrypted text' nonce123
+示例：AES解密 mypassword encrypted nonce123
 参数说明：
 - key: 解密密钥
-- ciphertext: 密文
+- ciphertext: 密文（可用单引号括起来以支持带空格的文本）
 - nonce: 随机数""",
 
-    "AES高级加密": """【AES高级加密 帮助】
+"AES高级加密": """【AES高级加密 帮助】
 功能：高级AES加密
 用法：AES高级加密 [key] [text] [mode] [padding]
+示例：AES高级加密 mypassword 'hello world' GCM PKCS7
 示例：AES高级加密 mypassword hello GCM PKCS7
 参数说明：
 - key: 加密密钥
-- text: 要加密的文本
+- text: 要加密的文本（可用单引号括起来以支持带空格的文本）
 - mode: 加密模式
 - padding: 填充方式""",
 
-    "AES高级解密": """【AES高级解密 帮助】
+"AES高级解密": """【AES高级解密 帮助】
 功能：高级AES解密
 用法：AES高级解密 [key] [ciphertext] [mode] [padding]
+示例：AES高级解密 mypassword 'encrypted text' GCM NONE
 示例：AES高级解密 mypassword encrypted GCM NONE
 参数说明：
 - key: 解密密钥
-- ciphertext: 密文
+- ciphertext: 密文（可用单引号括起来以支持带空格的文本）
 - mode: 加密模式
 - padding: 填充方式""",
 
-    "格式转换": """【格式转换 帮助】
+"格式转换": """【格式转换 帮助】
 功能：文本格式转换
 用法：格式转换 [text] [from] [to]
+示例：格式转换 'hello world' plain base64
 示例：格式转换 hello plain base64
 参数说明：
-- text: 要转换的文本
+- text: 要转换的文本（可用单引号括起来以支持带空格的文本）
 - from: 源格式
 - to: 目标格式
 支持格式：plain, base64, hex, url, html, unicode, binary, md5, sha1, sha256, sha512""",
@@ -1983,164 +2463,462 @@ UAPI_COMMAND_HELP = {
 - type: 图片子类别
 支持类别：acg, landscape, anime, pc_wallpaper, mobile_wallpaper, ai_drawing, bq, furry等""",
 
-    "答案之书": """【答案之书 帮助】
-功能：获取神秘答案
+"答案之书": """【答案之书 帮助】
+功能：获取来自神秘答案之书的随机回答
 用法：答案之书 [question]
-示例：答案之书 我今天会有好运吗？
-参数说明：
-- question: 问题""",
+参数详解：
+- question: 问题（可选参数）
+  * 可以是任何你想问的问题
+  * 如：我今天会有好运吗？
+  * 会得到随机的神秘回答
+返回信息包含：
+- 神秘的答案文本
+- 富有哲理的回答
+- 趣味性的建议
+使用示例：
+- 答案之书
+- 答案之书 我今天会有好运吗？
+- 答案之书 我应该辞职吗？
+- 答案之书 他会喜欢我吗？
+适用场景：
+- 娱乐消遣
+- 决策参考
+- 心理暗示
+- 趣味互动
+注意事项：
+- 答案仅供娱乐，不要过于认真
+- 回答是随机生成的
+- 不能替代理性思考和专业建议""",
 
 
 
-    "随机字符串": """【随机字符串 帮助】
-功能：生成随机字符串
+"随机字符串": """【随机字符串 帮助】
+功能：生成指定长度和类型的随机字符串
 用法：随机字符串 [length] [type]
-示例：随机字符串 16
-示例：随机字符串 32 alphanumeric
-参数说明：
-- length: 字符串长度
-- type: 字符类型（numeric, lower, upper, alpha, alphanumeric, hex）""",
+参数详解：
+- length: 字符串长度（可选参数，默认16）
+  * 数字，如：8、16、32
+  * 长度范围：1-1000
+- type: 字符类型（可选参数，默认alphanumeric）
+  * numeric：纯数字（0-9）
+  * lower：小写字母（a-z）
+  * upper：大写字母（A-Z）
+  * alpha：字母（a-zA-Z）
+  * alphanumeric：字母数字组合（默认）
+  * hex：十六进制（0-9a-f）
+返回信息包含：
+- 生成的随机字符串
+- 字符串长度信息
+使用示例：
+- 随机字符串
+- 随机字符串 16
+- 随机字符串 32 alphanumeric
+- 随机字符串 8 numeric
+- 随机字符串 10 hex
+应用场景：
+- 密码生成
+- 验证码创建
+- 唯一标识符
+- 测试数据生成
+注意事项：
+- 长度过大会影响生成速度
+- 不同类型安全性不同
+- 生成结果每次都不相同""",
 
-    "必应壁纸": """【必应壁纸 帮助】
-功能：获取必应每日壁纸
+"必应壁纸": """【必应壁纸 帮助】
+功能：获取必应搜索引擎的每日精选壁纸
 用法：必应壁纸
-示例：必应壁纸""",
+功能说明：
+此命令无需参数，直接执行即可
+返回信息包含：
+- 高清壁纸图片
+- 壁纸标题和描述
+- 拍摄地点信息
+- 版权信息
+使用示例：
+- 必应壁纸
+适用场景：
+- 桌面壁纸更换
+- 图片欣赏
+- 摄影作品收集
+- 美图分享
+注意事项：
+- 每日更新一张新壁纸
+- 图片质量很高
+- 可能因网络原因加载缓慢
+- 版权归原作者所有""",
 
-    "上传图片": """【上传图片 帮助】
-功能：上传Base64图片
+"上传图片": """【上传图片 帮助】
+功能：将Base64编码的图片数据上传并处理
 用法：上传图片 [base64_data]
-示例：上传图片 iVBORw0KGgoAAAANSUE...
-参数说明：
-- base64_data: Base64编码的图片数据""",
+参数详解：
+- base64_data: Base64编码的图片数据（必选参数）
+  * 完整的Base64图片编码字符串
+  * 支持常见图片格式：JPG、PNG、GIF等
+  * 数据较长，建议使用代码或工具生成
+返回信息包含：
+- 上传成功的确认信息
+- 图片处理结果
+- 可能的错误提示
+使用示例：
+- 上传图片 [完整的Base64数据]
+适用场景：
+- 图片分享
+- 图床服务
+- 图片处理前置步骤
+注意事项：
+- Base64数据必须完整有效
+- 图片大小有限制
+- 仅支持特定格式的图片""",
 
-    "图片转Base64": """【图片转Base64 帮助】
-功能：图片转Base64
+"图片转Base64": """【图片转Base64 帮助】
+功能：将网络图片转换为Base64编码格式
 用法：图片转Base64 [url]
-示例：图片转Base64 https://example.com/image.jpg
-参数说明：
-- url: 图片URL""",
+参数详解：
+- url: 图片URL（必选参数）
+  * 完整的图片网址
+  * 支持http和https协议
+  * 如：https://example.com/image.jpg
+返回信息包含：
+- 图片的完整Base64编码数据
+- 编码后的数据长度
+使用示例：
+- 图片转Base64 https://example.com/image.jpg
+- 图片转Base64 https://avatars.githubusercontent.com/u/123456
+适用场景：
+- 图片嵌入到网页或代码中
+- 数据传输格式转换
+- 图片存储和备份
+注意事项：
+- 图片必须可公开访问
+- 大图片转换后数据量很大
+- 转换过程需要网络连接""",
 
-    "生成二维码": """【生成二维码 帮助】
-功能：生成二维码
+"生成二维码": """【生成二维码 帮助】
+功能：根据文本内容生成二维码图片
 用法：生成二维码 [text] [size]
-示例：生成二维码 https://www.bilibili.com
-示例：生成二维码 Hello 512
-参数说明：
-- text: 二维码内容
-- size: 二维码尺寸""",
+参数详解：
+- text: 二维码内容（必选参数）
+  * 可以是网址、文本、联系方式等
+  * 如：https://www.bilibili.com
+  * 或：Hello World
+- size: 二维码尺寸（可选参数，默认256）
+  * 像素大小，如：256、512
+  * 范围：64-1024像素
+返回信息包含：
+- 生成的二维码图片
+- 图片尺寸信息
+使用示例：
+- 生成二维码 https://www.bilibili.com
+- 生成二维码 Hello 512
+- 生成二维码 tel:13800138000 300
+适用场景：
+- 网站链接分享
+- 联系方式交换
+- 产品信息展示
+- 活动推广
+注意事项：
+- 内容过长会影响二维码密度
+- 尺寸过小可能难以扫描
+- 建议在光线充足环境下扫描""",
 
-    "GrAvatar头像": """【GrAvatar头像 帮助】
-功能：获取GrAvatar头像
+"GrAvatar头像": """【GrAvatar头像 帮助】
+功能：根据邮箱地址获取对应的Gravatar全球头像
 用法：GrAvatar头像 [email]
-示例：GrAvatar头像 user@example.com
-参数说明：
-- email: 邮箱地址""",
+参数详解：
+- email: 邮箱地址（必选参数）
+  * 有效的电子邮箱地址
+  * 如：user@example.com
+  * 系统会自动进行MD5哈希处理
+返回信息包含：
+- 对应的Gravatar头像图片
+- 头像尺寸信息
+使用示例：
+- GrAvatar头像 user@example.com
+- GrAvatar头像 john.doe@gmail.com
+适用场景：
+- 用户头像显示
+- 评论系统头像
+- 社区论坛头像
+- 个人资料页面
+注意事项：
+- 邮箱必须在Gravatar注册过
+- 未注册的邮箱显示默认头像
+- 头像更新可能有延迟""",
 
-    "摸摸头": """【摸摸头 帮助】
-功能：生成摸摸头GIF
-用法：摸摸头 [qq]
-示例：摸摸头 10001
-参数说明：
-- qq: QQ号码""",
+"摸摸头": """【摸摸头 帮助】
+功能：生成有趣的摸摸头GIF动图
+用法：摸摸头 [qq] 或 摸摸头 @某人
+参数详解：
+- qq: QQ号码（可选参数）
+  * 直接输入QQ号码
+  * 如：10001、123456789
+- @某人: 支持@群成员自动提取QQ号
+  * 在群聊中@指定用户
+  * 系统自动识别被@用户的QQ号
+返回信息包含：
+- 生成的摸摸头GIF动图
+- 动图文件
+使用示例：
+- 摸摸头 10001
+- 摸摸头 @张三
+- 摸摸头 123456789
+适用场景：
+- 群聊互动娱乐
+- 表达友好情感
+- 活跃聊天氛围
+- 趣味性社交
+注意事项：
+- 需要在群聊环境中使用
+- @功能需要群成员支持
+- 生成的GIF文件较大""",
 
-    "生成摸摸头GIF POST": """【生成摸摸头GIF POST 帮助】
-功能：通过图片URL生成摸摸头GIF
-用法：生成摸摸头GIF POST [image_url]
-示例：生成摸摸头GIF POST https://example.com/image.jpg
-参数说明：
-- image_url: 图片URL""",
-
-    "无损压缩图片": """【无损压缩图片 帮助】
-功能：无损压缩图片
-用法：无损压缩图片 [file_path] [level] [format]
-示例：无损压缩图片 image.jpg
-示例：无损压缩图片 image.jpg 2 png
-参数说明：
-- file_path: 图片文件路径
-- level: 压缩等级(1-5，默认3)
-- format: 输出格式(png/jpeg，默认png)""",
-
-    "SVG转图片": """【SVG转图片 帮助】
-功能：将SVG矢量图转换为光栅图片
-用法：SVG转图片 [file_path] [format] [width] [height] [quality]
-示例：SVG转图片 input.svg
-示例：SVG转图片 input.svg png 800 600 90
-参数说明：
-- file_path: SVG文件路径
-- format: 输出格式(png,jpeg,jpg,gif,tiff,bmp，默认png)
-- width: 输出宽度(可选)
-- height: 输出高度(可选)
-- quality: JPEG质量(1-100，默认90)""",
-
-    "生成你们怎么不说话了表情包": """【生成你们怎么不说话了表情包 帮助】
-功能：生成梗图表情包
+"生成你们怎么不说话了表情包": """【生成你们怎么不说话了表情包 帮助】
+功能：生成经典的"你们怎么不说话了"梗图表情包
 用法：生成你们怎么不说话了表情包 [top_text] [bottom_text]
-示例：生成你们怎么不说话了表情包 玩UAPI 们不要玩UAPI了
-参数说明：
-- top_text: 上方文字
-- bottom_text: 下方文字""",
+参数详解：
+- top_text: 上方文字（可选参数）
+  * 表情包上方显示的文字
+  * 如：玩UAPI
+  * 可以为空
+- bottom_text: 下方文字（可选参数）
+  * 表情包下方显示的文字
+  * 如：们不要玩UAPI了
+  * 可以为空
+返回信息包含：
+- 生成的表情包图片
+- 自定义文字的表情包
+使用示例：
+- 生成你们怎么不说话了表情包 玩UAPI 们不要玩UAPI了
+- 生成你们怎么不说话了表情包 学习 们不要学了
+- 生成你们怎么不说话了表情包
+适用场景：
+- 群聊娱乐互动
+- 表达特定情境
+- 制作个性化表情
+- 趣味性沟通
+注意事项：
+- 文字内容请保持文明
+- 表情包仅供娱乐使用
+- 文字过长可能显示不全""",
 
-    "翻译": """【翻译 帮助】
-功能：文本翻译
+"翻译": """【翻译 帮助】
+功能：多语言文本翻译服务
 用法：翻译 [to_lang] [text]
-示例：翻译 zh-CHS hello world
-示例：翻译 en 你好世界
-参数说明：
-- to_lang: 目标语言代码
-- text: 要翻译的文本
-支持语言：zh-CHS, zh-CHT, en, ja, ko, fr, de, es, ru, ar等""",
+参数详解：
+- to_lang: 目标语言代码（必选参数）
+  * zh-CHS：简体中文
+  * zh-CHT：繁体中文
+  * en：英语
+  * ja：日语
+  * ko：韩语
+  * fr：法语
+  * de：德语
+  * es：西班牙语
+  * ru：俄语
+  * ar：阿拉伯语
+  * 更多语言代码请参考语言列表
+- text: 要翻译的文本（必选参数）
+  * 支持单引号括起包含空格的句子
+  * 如：'hello world today'
+  * 或直接输入：hello world
+返回信息包含：
+- 翻译后的文本内容
+- 源语言和目标语言标识
+- 翻译质量评估
+使用示例：
+- 翻译 zh-CHS hello world
+- 翻译 en 你好世界
+- 翻译 zh-CHS 'hello world today'
+- 翻译 ja Hello
+适用场景：
+- 跨语言交流
+- 学习外语
+- 国际业务沟通
+- 内容本地化
+注意事项：
+- 翻译质量取决于原文清晰度
+- 长文本可能需要更多处理时间
+- 某些专业术语可能翻译不够准确""",
 
-    "一言": """【一言 帮助】
-功能：获取随机诗词/名言
+"一言": """【一言 帮助】
+功能：获取随机的诗词名句或名人名言
 用法：一言
-示例：一言""",
+功能说明：
+此命令无需参数，直接执行即可
+返回信息包含：
+- 随机选取的经典诗词或名言
+- 作者信息
+- 作品出处
+- 文字内容
+使用示例：
+- 一言
+适用场景：
+- 文学欣赏
+- 写作灵感
+- 心灵鸡汤
+- 文化学习
+- 日常问候
+注意事项：
+- 内容来源于经典文学作品
+- 每次执行返回不同内容
+- 可能包含古文或现代文""",
 
-    "网页元数据提取": """【网页元数据提取 帮助】
-功能：提取网页元数据
+"网页元数据提取": """【网页元数据提取 帮助】
+功能：提取指定网页的元数据信息
 用法：网页元数据提取 [url]
-示例：网页元数据提取 https://www.bilibili.com
-参数说明：
-- url: 网页URL""",
+参数详解：
+- url: 网页URL（必选参数）
+  * 完整的网页地址
+  * 必须包含http://或https://
+  * 如：https://www.bilibili.com
+  * https://github.com
+返回信息包含：
+- 网页标题
+- 页面描述
+- 关键词信息
+- 作者信息
+- 发布时间
+- 字符集编码
+使用示例：
+- 网页元数据提取 https://www.bilibili.com
+- 网页元数据提取 https://github.com
+- 网页元数据提取 https://www.zhihu.com
+适用场景：
+- SEO优化分析
+- 网页信息收集
+- 内容抓取预处理
+- 网站分析
+注意事项：
+- 网页必须可公开访问
+- 部分网站可能反爬虫保护
+- 提取速度受网络影响""",
 
-    "网页图片提取": """【网页图片提取 帮助】
-功能：提取网页图片
-用法：网页图片提取 [url]
-示例：网页图片提取 https://cn.bing.com/
-参数说明：
-- url: 网页URL""",
-
-    "时间戳转换": """【时间戳转换 帮助】
-功能：时间戳与日期转换
+"时间戳转换": """【时间戳转换 帮助】
+功能：在Unix时间戳和人类可读日期之间相互转换
 用法：时间戳转换 [time]
-示例：时间戳转换 1698380645
-示例：时间戳转换 2023-10-27 15:04:05
-参数说明：
-- time: 时间戳或日期字符串""",
+参数详解：
+- time: 时间戳或日期字符串（必选参数）
+  * Unix时间戳：如1698380645
+  * 日期时间格式：如2023-10-27 15:04:05
+  * 支持多种日期格式
+返回信息包含：
+- 转换后的时间格式
+- 对应的另一种时间表示
+- 时区信息
+使用示例：
+- 时间戳转换 1698380645
+- 时间戳转换 2023-10-27 15:04:05
+- 时间戳转换 2023/10/27 15:04:05
+适用场景：
+- 程序开发调试
+- 日志时间分析
+- 系统维护
+- 数据处理
+注意事项：
+- 时间戳为UTC时间
+- 日期格式需标准规范
+- 支持常用的时间格式""",
 
-    "JSON格式化": """【JSON格式化 帮助】
-功能：JSON格式化
+"JSON格式化": """【JSON格式化 帮助】
+功能：将混乱的JSON字符串格式化为易读的标准格式
 用法：JSON格式化 [content]
-示例：JSON格式化 {"name":"test","value":123}
-参数说明：
-- content: JSON内容""",
+参数详解：
+- content: JSON内容（必选参数）
+  * 完整的JSON字符串
+  * 可以是压缩格式或混乱格式
+  * 如：{"name":"test","value":123}
+返回信息包含：
+- 格式化后的标准JSON
+- 良好的缩进和换行
+- 语法验证结果
+使用示例：
+- JSON格式化 {"name":"test","value":123}
+- JSON格式化 {'users':[{'id':1,'name':'张三'},{'id':2,'name':'李四'}]}
+适用场景：
+- API调试
+- 配置文件编辑
+- 数据分析
+- 代码开发
+注意事项：
+- JSON语法必须正确
+- 支持嵌套结构
+- 会自动添加适当的缩进""",
 
-    "每日新闻图": """【每日新闻图 帮助】
-功能：获取每日新闻图
+"每日新闻图": """【每日新闻图 帮助】
+功能：获取当日精选的新闻资讯汇总图片
 用法：每日新闻图
-示例：每日新闻图""",
+功能说明：
+此命令无需参数，直接执行即可
+返回信息包含：
+- 当日重要新闻摘要图片
+- 热点事件汇总
+- 时效性强的资讯内容
+- 精美的图文排版
+使用示例：
+- 每日新闻图
+适用场景：
+- 快速了解当日要闻
+- 朋友圈分享
+- 信息获取
+- 时事关注
+注意事项：
+- 每日定时更新
+- 内容来源于权威媒体
+- 图片质量较高
+- 更新时间可能有延迟""",
 
-    "程序员历史上的今天": """【程序员历史上的今天 帮助】
-功能：查询今天的历史事件
+"程序员历史上的今天": """【程序员历史上的今天 帮助】
+功能：查询历史上今天发生的程序员相关重要事件
 用法：程序员历史上的今天
-示例：程序员历史上的今天""",
+功能说明：
+此命令无需参数，直接执行即可
+返回信息包含：
+- 历史上今天发生的技术事件
+- 重要软件发布记录
+- 科技公司成立纪念
+- 程序员节日信息
+- 技术发展里程碑
+使用示例：
+- 程序员历史上的今天
+适用场景：
+- 技术历史文化了解
+- 程序员节日庆祝
+- 技术发展历程学习
+- 行业知识拓展
+注意事项：
+- 内容聚焦程序员和技术领域
+- 事件真实可靠
+- 每天内容可能不同""",
 
-    "程序员历史事件": """【程序员历史事件 帮助】
-功能：查询指定日期历史事件
+"程序员历史事件": """【程序员历史事件 帮助】
+功能：查询指定日期历史上发生的程序员相关事件
 用法：程序员历史事件 [month] [day]
-示例：程序员历史事件 4 1
-参数说明：
-- month: 月份
-- day: 日期"""
+参数详解：
+- month: 月份（必选参数）
+  * 数字格式：1-12
+  * 如：4表示四月
+- day: 日期（必选参数）
+  * 数字格式：1-31
+  * 如：1表示第一天
+返回信息包含：
+- 指定日期的历史技术事件
+- 重要产品发布时间
+- 科技公司重大事件
+- 技术标准确立时间
+使用示例：
+- 程序员历史事件 4 1
+- 程序员历史事件 10 24
+- 程序员历史事件 1 1
+适用场景：
+- 历史事件查询
+- 技术发展回顾
+- 特定日期纪念
+- 行业知识学习
+注意事项：
+- 日期必须有效
+- 内容专注于技术领域
+- 事件经过考证核实"""
 }
 
 
@@ -2334,6 +3112,9 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             min_val = 1
             max_val = 100
             count = 1
+            allow_repeat = False  # 默认不允许重复（与API客户端一致）
+            allow_decimal = False  # 默认不生成小数
+            decimal_places = 2  # 默认小数位数
             
             if args:
                 try:
@@ -2343,10 +3124,18 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                         max_val = int(args[1])
                     if len(args) >= 3:
                         count = int(args[2])
+                    if len(args) >= 4:
+                        allow_repeat = args[3].lower() in ['true', '1', 'yes', 'y', '是', '允许']
+                    if len(args) >= 5:
+                        allow_decimal = args[4].lower() in ['true', '1', 'yes', 'y', '是', '允许']
+                    if len(args) >= 6:
+                        decimal_places = int(args[5])
                 except ValueError:
-                    return "参数必须是数字\n示例: /随机数生成 1 100 5"
+                    return "参数必须是数字\n示例: /随机数生成 1 100 5 true false 2"
             
-            result = await api.get_randomnumber(min_val=min_val, max_val=max_val, count=count)
+            result = await api.get_randomnumber(min_val=min_val, max_val=max_val, count=count, 
+                                              allow_repeat=allow_repeat, allow_decimal=allow_decimal, 
+                                              decimal_places=decimal_places)
             if result:
                 return format_uapi_response(command_name, result, config)
             else:
@@ -2495,7 +3284,7 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
 
         elif command_name == "摸摸头":
             if not args or not args[0].isdigit():
-                return "请提供QQ号码\n示例: /摸摸头 10001"
+                return "请提供QQ号码或@某人\n示例: /摸摸头 10001 或 /摸摸头 @某人"
 
             qq = args[0]
             result = await api.get_image_motou(qq=qq)
@@ -2513,10 +3302,11 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
 
         elif command_name == "翻译":
             if not args or len(args) < 2:
-                return "请提供目标语言和要翻译的文本\n示例: /翻译 zh-CHS hello world"
+                return "请提供目标语言和要翻译的文本\n示例: /翻译 zh-CHS hello\n示例: /翻译 zh-CHS 'hello world'"
 
             to_lang = args[0]
-            text = " ".join(args[1:])
+            text = " ".join(args[1:])  # 参数已经在command_handler.py中正确处理了引号
+            
             result = await api.post_translate_text(to_lang=to_lang, text=text)
             if result:
                 return format_uapi_response(command_name, result, config)
@@ -2551,7 +3341,7 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 return "请提供域名\n示例: /WHOIS查询 google.com"
             
             domain = args[0]
-            format_param = args[1] if len(args) > 1 else "text"
+            format_param = args[1] if len(args) > 1 else "json"
             
             result = await api.get_whois(domain=domain, format_param=format_param)
             if result:
@@ -2649,31 +3439,21 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             username = args[0]
             result = await api.get_minecraft_userinfo(username=username)
             if result:
+                # 尝试下载并发送皮肤图片
+                if 'skin_url' in result and result['skin_url'] != 'N/A':
+                    img_path = await download_skin_image(result['skin_url'], username)
+                    if img_path:
+                        # 先发送文本消息
+                        text = f"[MC玩家查询]\n用户名: {result.get('username', 'N/A')}\nUUID: {result.get('uuid', 'N/A')}"
+                        await send_group_msg(group_id, text)
+                        # 然后发送图片
+                        await send_group_img(group_id, img_path)
+                        return ""  # 返回空字符串，表示已处理完
+                
+                # 如果没有皮肤URL或下载失败，返回普通文本
                 return format_uapi_response(command_name, result, config)
             else:
                 return "MC玩家查询失败"
-
-        elif command_name == "MC曾用名查询":
-            if not args or not args[0]:
-                return "请提供MC用户名或UUID\n示例: /MC曾用名查询 Notch"
-            
-            name_or_uuid = args[0]
-            result = await api.get_minecraft_historyid(name=name_or_uuid)
-            if result:
-                return format_uapi_response(command_name, result, config)
-            else:
-                return "MC曾用名查询失败"
-
-        elif command_name == "文本分析":
-            if not args:
-                return "请提供要分析的文本\n示例: /文本分析 这是一段测试文本"
-            
-            text = " ".join(args)
-            result = await api.post_text_analyze(text=text)
-            if result:
-                return format_uapi_response(command_name, result, config)
-            else:
-                return "文本分析失败"
 
         elif command_name == "MD5哈希":
             if not args:
@@ -2816,17 +3596,6 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             else:
                 return "网页元数据提取失败"
 
-        elif command_name == "网页图片提取":
-            if not args or not args[0]:
-                return "请提供网页URL\n示例: /网页图片提取 https://www.bilibili.com"
-            
-            url = args[0]
-            result = await api.get_webparse_extractimages(url=url)
-            if result:
-                return format_uapi_response(command_name, result, config)
-            else:
-                return "网页图片提取失败"
-
         elif command_name == "时间戳转换":
             if not args or not args[0]:
                 return "请提供时间戳或日期\n示例: /时间戳转换 1698380645 或 /时间戳转换 2023-10-27 15:04:05"
@@ -2849,32 +3618,6 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             else:
                 return "JSON格式化失败"
 
-        elif command_name == "无损压缩图片":
-            if not args or not args[0]:
-                return "请提供图片文件路径\n示例: /无损压缩图片 image.jpg"
-            
-            image_path = args[0]
-            # 验证文件路径安全性，防止路径遍历
-            if '..' in image_path or image_path.startswith('/') or ':' in image_path and image_path[1] == '\\':
-                return "无效的文件路径，不允许使用相对路径或绝对路径"
-            
-            try:
-                level = int(args[1]) if len(args) > 1 else 3
-                if level < 1 or level > 5:
-                    return "压缩等级必须在1-5之间"
-            except ValueError:
-                return "压缩等级必须是数字(1-5)"
-                
-            format_param = args[2] if len(args) > 2 else "png"
-            if format_param not in ["png", "jpeg"]:
-                return "输出格式必须是png或jpeg"
-            
-            result = await api.post_image_compress(file_path=image_path, level=level, format_param=format_param)
-            if result:
-                return result  # 返回图片二进制数据
-            else:
-                return "无损压缩图片失败"
-
         elif command_name == "生成你们怎么不说话了表情包":
             if not args or len(args) < 2:
                 return "请提供顶部和底部文字\n示例: /生成你们怎么不说话了表情包 玩UAPI 们不要玩UAPI了"
@@ -2887,46 +3630,7 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
             else:
                 return "表情包生成失败"
 
-        elif command_name == "SVG转图片":
-            if not args or not args[0]:
-                return "请提供SVG文件路径\n示例: /SVG转图片 input.svg"
 
-            svg_path = args[0]
-            # 验证文件路径安全性，防止路径遍历
-            if '..' in svg_path or svg_path.startswith('/') or ':' in svg_path and svg_path[1] == '\\':
-                return "无效的文件路径，不允许使用相对路径或绝对路径"
-            
-            format_param = args[1] if len(args) > 1 else "png"
-            if format_param not in ["png", "jpeg", "jpg", "gif", "tiff", "bmp"]:
-                return "输出格式必须是png/jpeg/jpg/gif/tiff/bmp之一"
-                
-            try:
-                width = int(args[2]) if len(args) > 2 and args[2].isdigit() else None
-                if width and width <= 0:
-                    return "宽度必须是正整数"
-            except ValueError:
-                return "宽度必须是正整数"
-                
-            try:
-                height = int(args[3]) if len(args) > 3 and args[3].isdigit() else None
-                if height and height <= 0:
-                    return "高度必须是正整数"
-            except ValueError:
-                return "高度必须是正整数"
-                
-            try:
-                quality = int(args[4]) if len(args) > 4 and args[4].isdigit() else 90
-                if quality < 1 or quality > 100:
-                    return "质量必须在1-100之间"
-            except ValueError:
-                return "质量必须是1-100之间的数字"
-
-            result = await api.post_image_svg(file_path=svg_path, format_param=format_param, 
-                                           width=width, height=height, quality=quality)
-            if result:
-                return result  # 返回图片二进制数据
-            else:
-                return "SVG转图片失败"
 
         elif command_name == "上传图片":
             if not args or not args[0]:
@@ -2949,19 +3653,6 @@ async def handle_uapi_command(command_name: str, args: List[str], group_id: str,
                 return format_uapi_response(command_name, result, config)
             else:
                 return "图片转Base64失败"
-
-        elif command_name == "生成摸摸头GIF POST":
-            if not args or not args[0]:
-                return "请提供图片URL\n示例: /生成摸摸头GIF POST https://example.com/image.jpg"
-
-            image_url = args[0]
-            bg_color = args[1] if len(args) > 1 else "transparent"
-            
-            result = await api.post_image_motou(image_url=image_url, bg_color=bg_color)
-            if result:
-                return result  # 返回图片二进制数据
-            else:
-                return "生成摸摸头GIF POST失败"
 
         elif command_name == "每日新闻图":
             result = await api.get_daily_news_image()

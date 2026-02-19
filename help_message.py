@@ -69,7 +69,7 @@ def get_help_message(config: Dict[str, Any] = None) -> str:
 • /我的订阅 - 查看个人订阅列表
 
 【系统命令】
-• /bydbottest - 运行测试命令
+• /eqtest - 运行测试命令
 • /broadcast 或 /群发 - 进入广播模式（仅主人）
 
 【数据源说明】
@@ -121,7 +121,6 @@ Bydbot v2.0 - UAPI功能模块
 • /MC曾用名查询 [name/uuid] - 查询Minecraft玩家历史用户名
 
 【文本类 API】
-• /文本分析 [text] - 文本字符数、词数、句子数统计
 • /MD5哈希 [text] - 计算文本MD5哈希值
 • /MD5校验 [text] [hash] - 校验文本MD5哈希值
 • /Base64编码 [text] - 文本Base64编码
@@ -143,21 +142,18 @@ Bydbot v2.0 - UAPI功能模块
 • /图片转Base64 [url] - 将图片URL转换为Base64 Data URI
 • /生成二维码 [text] [size] [format] [transparent] [fgcolor] [bgcolor] - 生成自定义二维码
 • /GrAvatar头像 [email/hash] [s] [d] [r] - 获取Gravatar头像
-• /摸摸头 [qq] [bg_color] - 通过QQ号生成摸摸头GIF
-• /生成摸摸头GIF POST [image_url] [bg_color] - 通过图片URL生成摸摸头GIF
-• /无损压缩图片 [file] [level] [format] - 无损压缩PNG/JPG图片
+• /摸摸头 [qq] [bg_color] - 通过QQ号或@某人生成摸摸头GIF
 • /生成你们怎么不说话了表情包 [top_text] [bottom_text] - 生成梗图表情包
 • /SVG转图片 [file] [format] [width] [height] [quality] - SVG矢量图转光栅图
 
 【翻译类 API】
-• /翻译 [to_lang] [text] - 文本翻译（支持100+种语言）
+• /翻译 [to_lang] [text] - 文本翻译（支持100+种语言，可用单引号括起来支持带空格的句子）
 
 【诗词类 API】
 • /一言 - 随机返回一句诗词、动漫台词或名人名言
 
 【网页解析类 API】
-• /网页元数据提取 [url] - 提取网页标题、描述、关键词、Open Graph等元数据
-• /网页图片提取 [url] - 提取网页中所有图片URL列表
+• /网页元数据提取 [url] - 提取网页元数据
 
 【转换类 API】
 • /时间戳转换 [time] - Unix时间戳与日期字符串智能转换

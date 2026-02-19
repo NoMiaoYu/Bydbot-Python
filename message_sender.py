@@ -1,6 +1,7 @@
 import base64
 import aiohttp
 import logging
+import os
 from typing import Optional, Dict, Any
 
 # 全局变量
@@ -32,6 +33,159 @@ async def init_sender(url: str, token: str) -> None:
     
     if token:
         HEADERS['Authorization'] = f'Bearer {token}'
+
+
+async def send_group_msg_with_at(group_id: str, text: str, user_id: str = None) -> bool:
+    """
+    发送带@的文本消息到QQ群（使用OneBot v11标准CQ码）
+    :param group_id: 群号
+    :param text: 消息文本
+    :param user_id: 要@的用户ID（可选）
+    :return: 发送是否成功
+    """
+    global SESSION, HEADERS
+    if not SESSION:
+        logging.error("消息发送器未初始化")
+        return False
+
+    try:
+        # 构建消息内容
+        message_content = []
+        
+        # 如果有用户ID，添加@CQ码
+        if user_id:
+            message_content.append({
+                "type": "at",
+                "data": {
+                    "qq": str(user_id)
+                }
+            })
+            # 添加换行
+            message_content.append({
+                "type": "text",
+                "data": {
+                    "text": "\n"
+                }
+            })
+        
+        # 添加文本内容
+        message_content.append({
+            "type": "text",
+            "data": {
+                "text": text
+            }
+        })
+        
+        payload = {
+            "group_id": int(group_id),
+            "message": message_content
+        }
+
+        async with SESSION.post('/send_group_msg', json=payload, headers=HEADERS) as resp:
+            response_text = await resp.text()
+
+            if resp.status == 200:
+                at_info = f"@{user_id} " if user_id else ""
+                logging.info(f"发送带@消息到群 {group_id}: {at_info}{text[:50]}...")
+                return True
+            else:
+                logging.error(f"发送带@消息失败，状态码 {resp.status}: {response_text}")
+                return False
+
+    except ValueError as e:
+        logging.error(f"群号格式错误: {e}")
+        return False
+    except aiohttp.ClientError as e:
+        logging.error(f"HTTP客户端错误: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"发送带@消息时发生未知错误: {e}")
+        return False
+
+
+async def send_group_msg_with_text_and_image(group_id: str, text: str, image_path: str = None, user_id: str = None) -> bool:
+    """
+    在同一消息中发送文本和图片到QQ群
+    :param group_id: 群号
+    :param text: 文本内容
+    :param image_path: 图片文件路径（可选）
+    :param user_id: 要@的用户ID（可选）
+    :return: 发送是否成功
+    """
+    global SESSION, HEADERS
+    if not SESSION:
+        logging.error("消息发送器未初始化")
+        return False
+
+    try:
+        message_content = []
+        
+        # 如果有用户ID，添加@CQ码
+        if user_id:
+            message_content.append({
+                "type": "at",
+                "data": {
+                    "qq": str(user_id)
+                }
+            })
+            # 添加换行
+            message_content.append({
+                "type": "text",
+                "data": {
+                    "text": "\n"
+                }
+            })
+        
+        # 添加文本内容
+        message_content.append({
+            "type": "text",
+            "data": {
+                "text": text
+            }
+        })
+        
+        # 如果有图片，添加图片
+        if image_path and os.path.exists(image_path):
+            # 添加换行分隔文本和图片
+            message_content.append({
+                "type": "text",
+                "data": {
+                    "text": "\n"
+                }
+            })
+            
+            # 读取并编码图片数据
+            with open(image_path, 'rb') as f:
+                img_data = f.read()
+                b64 = base64.b64encode(img_data).decode('utf-8')
+            
+            message_content.append({
+                "type": "image",
+                "data": {
+                    "file": f"base64://{b64}"
+                }
+            })
+        
+        payload = {
+            "group_id": int(group_id),
+            "message": message_content
+        }
+
+        async with SESSION.post('/send_group_msg', json=payload, headers=HEADERS) as resp:
+            response_text = await resp.text()
+            
+            if resp.status == 200:
+                at_info = f"@{user_id} " if user_id else ""
+                img_info = "含图片" if image_path else "纯文本"
+                logging.info(f"发送复合消息到群 {group_id}: {at_info}{img_info}, 文本长度: {len(text)}")
+                return True
+            else:
+                logging.error(f"发送复合消息失败，状态码 {resp.status}: {response_text}")
+                return False
+                
+    except Exception as e:
+        logging.error(f"发送复合消息时发生错误: {e}")
+        return False
 
 
 async def send_group_msg(group_id: str, text: str) -> bool:

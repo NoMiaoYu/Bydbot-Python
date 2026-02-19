@@ -6,10 +6,10 @@ Bydbot - 命令处理器
 import json
 import logging
 import os
+import asyncio
 from typing import Dict, Any, Tuple, List, Optional
 from help_message import get_help_message
 from message_sender import send_group_msg, send_group_img
-from draw_eq import draw_earthquake_async
 from ws_handler import process_message  # 复用处理逻辑
 
 # 导入天气API模块
@@ -38,7 +38,81 @@ except ImportError as e:
 
 # 导入全局变量
 import sys
+import re
 sys.path.append(os.path.dirname(__file__))
+
+# 导入绘图模块
+try:
+    from draw_eq import draw_earthquake_async
+    DRAW_EQ_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"绘图模块导入失败: {e}")
+    DRAW_EQ_AVAILABLE = False
+
+
+def parse_cq_code(message: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """
+    解析消息中的CQ码
+    :param message: 原始消息
+    :return: (纯文本消息, CQ码列表)
+    """
+    cq_codes = []
+    
+    # 匹配CQ码格式: [CQ:type,key=value,key=value,...]
+    pattern = r'\[CQ:([a-zA-Z]+)((?:,[^,\]]+=[^,\]]+)*)\]'
+    
+    def replace_cq(match):
+        cq_type = match.group(1)
+        params_str = match.group(2)
+        
+        # 解析参数
+        params = {}
+        if params_str:
+            param_pairs = params_str[1:].split(',')  # 去掉开头的逗号
+            for pair in param_pairs:
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
+                    params[key] = value
+        
+        cq_codes.append({
+            'type': cq_type,
+            'data': params
+        })
+        
+        return ''  # 替换为空字符串
+    
+    # 替换所有CQ码
+    clean_message = re.sub(pattern, replace_cq, message)
+    
+    return clean_message, cq_codes
+
+
+def extract_qq_from_at(event: Dict[str, Any]) -> Optional[str]:
+    """
+    从事件中提取@的QQ号
+    :param event: 事件数据
+    :return: QQ号，如果没有@则返回None
+    """
+    # 方法1: 从message字段解析CQ码
+    message = event.get('message', '')
+    if isinstance(message, list):
+        # message是数组格式
+        for segment in message:
+            if isinstance(segment, dict):
+                if segment.get('type') == 'at':
+                    qq = segment.get('data', {}).get('qq')
+                    if qq and qq != 'all':
+                        return qq
+    elif isinstance(message, str):
+        # message是字符串格式，包含CQ码
+        _, cq_codes = parse_cq_code(message)
+        for cq in cq_codes:
+            if cq['type'] == 'at':
+                qq = cq['data'].get('qq')
+                if qq and qq != 'all':
+                    return qq
+    
+    return None
 
 
 def is_valid_test_command_event(event: Dict[str, Any], config: Dict[str, Any]) -> bool:
@@ -64,7 +138,7 @@ def is_valid_test_command_event(event: Dict[str, Any], config: Dict[str, Any]) -
 
     # 检查是否为测试命令
     raw_message = event.get("raw_message", "").strip()
-    test_cmd = config.get("test_command", "/bydbottest")
+    test_cmd = config.get("test_command", "/eqtest")
 
     return raw_message == test_cmd
 
@@ -132,11 +206,11 @@ def create_test_earthquake_data() -> list:
             "source": "emsc",
             "Data": {
                 "id": "test_emsc_001",
-                "shockTime": "2026-02-02 03:00:00",
+                "shockTime": "2026-02-16 10:30:00",
                 "latitude": 33.993,
                 "longitude": -116.949,
                 "depth": 6,
-                "magnitude": 2.1,
+                "magnitude": 6.2,
                 "placeName": "SOUTHERN CALIFORNIA (测试)"
             }
         },
@@ -145,9 +219,9 @@ def create_test_earthquake_data() -> list:
             "source": "usgs",
             "Data": {
                 "id": "test_usgs_001",
-                "shockTime": "2026-02-02 04:59:59",
+                "shockTime": "2026-02-16 11:45:00",
                 "placeName": "汤加群岛附近[正式(已核实)] (测试)",
-                "magnitude": 5.8,
+                "magnitude": 7.1,
                 "latitude": -20.0,
                 "longitude": -175.0,
                 "depth": 10
@@ -156,42 +230,107 @@ def create_test_earthquake_data() -> list:
     ]
 
 
+async def send_test_message(test_data: dict, group_id: str, config: dict):
+    """
+    发送测试消息（直接发送，不经过数据库处理）
+    :param test_data: 测试数据
+    :param group_id: 群ID
+    :param config: 配置
+    """
+    try:
+        data = test_data.get("Data", {})
+        source = test_data.get("source", "test")
+
+        # 构建测试消息
+        message = f"[测试数据 - {source.upper()}]\n"
+        message += f"| 发生时间: {data.get('shockTime', 'N/A')}\n"
+        message += f"| 震级: M {data.get('magnitude', 'N/A')}\n"
+        message += f"| 深度: {data.get('depth', 'N/A')}km\n"
+        message += f"| 震中: {data.get('placeName', 'N/A')}\n"
+        message += f"| 经纬度: {data.get('longitude', 'N/A')} {data.get('latitude', 'N/A')}\n"
+        message += f"| 数据ID: {data.get('id', 'N/A')}"
+
+        # 发送文本消息
+        await send_group_msg(group_id, message)
+        logging.info(f"已发送测试消息到群 {group_id}")
+
+        # 尝试绘制地震地图
+        if DRAW_EQ_AVAILABLE:
+            try:
+                # 检查配置中是否启用该数据源的绘图
+                drawing_config = config.get("earthquake", {}).get("drawing", {})
+                draw_sources = drawing_config.get("sources", [])
+
+                # 测试数据也检查是否在绘图源列表中
+                if source in draw_sources or not draw_sources:  # 如果列表为空则所有源都绘图
+                    # 准备绘图数据
+                    draw_data = {
+                        'latitude': data.get('latitude'),
+                        'longitude': data.get('longitude'),
+                        'magnitude': data.get('magnitude'),
+                        'shockTime': data.get('shockTime'),
+                        'placeName': data.get('placeName'),
+                        'infoTypeName': '测试数据',
+                        '_source': source
+                    }
+
+                    # 调用异步绘图
+                    image_path = await draw_earthquake_async(draw_data, source)
+
+                    if image_path:
+                        # 发送图片
+                        await send_group_img(group_id, image_path)
+                        logging.info(f"已发送测试地震图到群 {group_id}")
+                    else:
+                        logging.warning(f"测试地震图绘制失败: {source}")
+                else:
+                    logging.debug(f"数据源 {source} 不在绘图源列表中，跳过绘图")
+            except Exception as e:
+                logging.error(f"绘制测试地震图失败: {e}")
+        else:
+            logging.warning("绘图模块不可用，跳过测试数据绘图")
+
+    except Exception as e:
+        logging.error(f"发送测试消息失败: {e}")
+        await send_group_msg(group_id, f"测试消息发送失败: {str(e)}")
+
+
 def get_weather_command_help(command_name: str) -> str:
     """获取天气命令的帮助信息"""
     help_info = {
-        "城市搜索": "城市搜索 location [adm] [range] [number] [lang]\n- location: 城市名称、经纬度、LocationID或Adcode（必选）\n- adm: 上级行政区划，用于排除重名城市（可选）\n- range: 搜索范围，ISO 3166国家代码（可选）\n- number: 返回结果数量(1-20，默认10)（可选）\n- lang: 多语言设置（可选）\n示例: 城市搜索 北京\n示例: 城市搜索 上海 CN 10 zh",
+        "城市搜索": "【城市搜索 帮助】\n功能：根据关键词搜索全球城市信息\n用法：城市搜索 location [adm] [range] [number] [lang]\n参数详解：\n- location: 城市名称、经纬度坐标、LocationID或Adcode（必选参数）\n  * 城市名称：如\"北京\"、\"上海\"、\"New York\"\n  * 经纬度：格式为\"经度,纬度\"，如\"116.4074,39.9042\"\n  * LocationID：和风天气城市ID，如\"101010100\"\n  * Adcode：行政区域代码\n- adm: 上级行政区划名称，用于精确匹配同名城市（可选参数）\n  * 例如搜索\"西安\"时，可指定\"陕西省\"来排除其他同名城市\n- range: 搜索范围限制，使用ISO 3166国家代码（可选参数）\n  * 如\"CN\"表示仅在中国范围内搜索\n  * \"US\"表示仅在美国范围内搜索\n  * 留空表示全球搜索\n- number: 返回结果数量，范围1-20，默认10个（可选参数）\n  * 数值越大返回结果越多，但会增加响应时间\n- lang: 多语言设置，支持多种语言（可选参数）\n  * zh：简体中文（默认）\n  * en：英语\n  * ja：日语\n  * 其他语言代码\n使用示例：\n- 城市搜索 北京\n- 城市搜索 上海 CN 10 zh\n- 城市搜索 116.4074,39.9042\n- 城市搜索 New York US 5 en\n注意事项：\n- location参数为必填项，其他参数均为可选\n- 当搜索结果较多时，建议使用adm参数进行精确匹配\n- 返回结果按相关性排序，最匹配的结果排在前面",
 
-        "热门城市查询": "热门城市查询 [range] [number] [lang]\n- range: 国家代码（可选）\n- number: 返回数量(1-20，默认10)（可选）\n- lang: 语言（可选）\n示例: 热门城市查询\n示例: 热门城市查询 CN 15 zh",
+        "热门城市查询": "【热门城市查询 帮助】\n功能：查询全球或指定国家/地区的热门城市列表\n用法：热门城市查询 [range] [number] [lang]\n参数详解：\n- range: 国家/地区范围限制，使用ISO 3166国家代码（可选参数）\n  * CN：中国\n  * US：美国\n  * JP：日本\n  * GB：英国\n  * 留空表示查询全球热门城市\n- number: 返回城市数量，范围1-20，默认10个（可选参数）\n  * 建议根据需要调整，避免返回过多无关结果\n- lang: 语言设置（可选参数）\n  * zh：简体中文（默认）\n  * en：英语\n  * ja：日语\n  * 其他支持的语言代码\n使用示例：\n- 热门城市查询\n- 热门城市查询 CN 15 zh\n- 热门城市查询 US 20 en\n- 热门城市查询 JP 8 ja\n注意事项：\n- 热门城市基于搜索热度和人口规模综合排序\n- 不同语言环境下返回的城市名称会相应本地化\n- 全球热门城市通常包含国际大都市",
 
-        "POI搜索": "POI搜索 location type [city] [number] [lang]\n- location: 地点名称、经纬度等（必选）\n- type: POI类型(scenic景点, TSTA潮汐站点, city城市)（必选）\n- city: POI所在城市（可选）\n- number: 返回结果数量(1-20，默认10)（可选）\n- lang: 多语言设置（可选）\n示例: POI搜索 故宫 scenic",
+        "POI搜索": "【POI搜索 帮助】\n功能：搜索兴趣点(Points of Interest)信息\n用法：POI搜索 location type [city] [number] [lang]\n参数详解：\n- location: 兴趣点名称或坐标位置（必选参数）\n  * 地点名称：如\"故宫\"、\"东方明珠\"、\"Central Park\"\n  * 经纬度坐标：格式\"经度,纬度\"\n  * 地址信息\n- type: 兴趣点类型（必选参数）\n  * scenic：旅游景点\n  * TSTA：潮汐观测站点\n  * city：城市信息\n  * station：气象站点\n- city: 指定搜索的城市范围（可选参数）\n  * 用于缩小搜索范围，提高准确性\n  * 如\"北京市\"、\"上海市\"\n- number: 返回结果数量，1-20个，默认10个（可选参数）\n- lang: 多语言设置（可选参数）\n  * zh：简体中文（默认）\n  * en：英语\n  * 其他支持的语言\n使用示例：\n- POI搜索 故宫 scenic\n- POI搜索 Central Park scenic New York 5 en\n- POI搜索 121.4997,31.2397 scenic 上海市 10 zh\n注意事项：\n- location和type为必填参数\n- city参数有助于提高搜索精度\n- 不同类型的POI返回的信息结构可能不同",
 
-        "实时天气": "实时天气 location [lang] [unit]\n- location: LocationID或经纬度坐标（必选）\n- lang: 多语言设置（可选，默认zh）\n- unit: 单位(m公制, i英制)（可选，默认m）\n示例: 实时天气 101010100\n示例: 实时天气 116.4074,39.9042 zh m",
+        "实时天气": "【实时天气 帮助】\n功能：查询指定地点的当前实时天气状况\n用法：实时天气 location [lang] [unit]\n参数详解：\n- location: 查询位置标识（必选参数）\n  * LocationID：和风天气城市ID，如\"101010100\"（推荐）\n  * 经纬度坐标：格式\"经度,纬度\"，如\"116.4074,39.9042\"\n  * 城市名称：如\"北京\"、\"上海\"（准确度较低）\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n  * 其他支持的语言代码\n- unit: 度量单位系统（可选参数，默认m）\n  * m：公制单位（摄氏度、公里/小时等）\n  * i：英制单位（华氏度、英里/小时等）\n使用示例：\n- 实时天气 101010100\n- 实时天气 116.4074,39.9042 zh m\n- 实时天气 101020100 en i\n- 实时天气 -74.0059,40.7128 en i\n返回信息包含：\n- 当前温度、体感温度\n- 天气状况描述\n- 湿度、风向风力\n- 能见度、气压\n- 数据更新时间\n注意事项：\n- 使用LocationID查询最为准确\n- 经纬度查询适合偏远地区\n- 英制单位下温度显示为华氏度",
 
-        "每日天气预报": "每日天气预报 days location [lang] [unit]\n- days: 预报天数(3d, 7d, 10d, 15d, 30d)（必选）\n- location: LocationID或经纬度坐标（必选）\n- lang: 多语言设置（可选）\n- unit: 单位（可选）\n示例: 每日天气预报 7d 101010100\n示例: 每日天气预报 3d 116.4074,39.9042 zh m",
+        "每日天气预报": "【每日天气预报 帮助】\n功能：查询未来几天的天气预报\n用法：每日天气预报 days location [lang] [unit]\n参数详解：\n- days: 预报天数（必选参数）\n  * 3d：未来3天预报\n  * 7d：未来7天预报（推荐）\n  * 10d：未来10天预报\n  * 15d：未来15天预报\n  * 30d：未来30天预报\n- location: 查询位置标识（必选参数）\n  * LocationID：和风天气城市ID，如\"101010100\"（推荐）\n  * 经纬度坐标：格式\"经度,纬度\"，如\"116.4074,39.9042\"\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n  * 其他支持的语言代码\n- unit: 度量单位系统（可选参数，默认m）\n  * m：公制单位（摄氏度、公里/小时等）\n  * i：英制单位（华氏度、英里/小时等）\n使用示例：\n- 每日天气预报 7d 101010100\n- 每日天气预报 3d 116.4074,39.9042 zh m\n- 每日天气预报 10d 101020100 en i\n- 每日天气预报 15d -74.0059,40.7128 en\n返回信息包含：\n- 每日最高温度和最低温度\n- 白天和夜间天气状况\n- 风向风力预报\n- 降水概率\n- 紫外线指数等\n注意事项：\n- 预报时间越长，准确度相对降低\n- 3-7天预报准确度最高\n- 30天预报仅供参考趋势",
 
-        "逐小时天气预报": "逐小时天气预报 hours location [lang] [unit]\n- hours: 预报小时数(24h, 72h, 168h)（必选）\n- location: LocationID或经纬度坐标（必选）\n- lang: 多语言设置（可选）\n- unit: 单位（可选）\n示例: 逐小时天气预报 24h 101010100",
+        "逐小时天气预报": "【逐小时天气预报 帮助】\n功能：查询未来几小时的详细天气变化\n用法：逐小时天气预报 hours location [lang] [unit]\n参数详解：\n- hours: 预报小时数（必选参数）\n  * 24h：未来24小时预报（推荐日常使用）\n  * 72h：未来72小时预报\n  * 168h：未来168小时预报（一周）\n- location: 查询位置标识（必选参数）\n  * LocationID：和风天气城市ID，如\"101010100\"（推荐）\n  * 经纬度坐标：格式\"经度,纬度\"，如\"116.4074,39.9042\"\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n  * 其他支持的语言代码\n- unit: 度量单位系统（可选参数，默认m）\n  * m：公制单位（摄氏度、公里/小时等）\n  * i：英制单位（华氏度、英里/小时等）\n使用示例：\n- 逐小时天气预报 24h 101010100\n- 逐小时天气预报 72h 116.4074,39.9042 zh m\n- 逐小时天气预报 168h 101020100 en i\n返回信息包含：\n- 每小时具体温度\n- 天气状况变化\n- 降水量预测\n- 风向风力变化\n- 湿度变化趋势\n注意事项：\n- 24小时预报准确度最高\n- 适合安排短期出行计划\n- 每小时数据更新及时",
 
-        "格点实时天气": "格点实时天气 location [lang] [unit]\n- location: 经纬度坐标（必选）\n- lang: 多语言设置（可选）\n- unit: 单位（可选）\n示例: 格点实时天气 116.4074,39.9042",
+        "格点实时天气": "【格点实时天气 帮助】\n功能：基于网格点查询精确位置的实时天气\n用法：格点实时天气 location [lang] [unit]\n参数详解：\n- location: 精确经纬度坐标（必选参数）\n  * 格式必须为\"经度,纬度\"\n  * 如\"116.4074,39.9042\"（北京）\n  * \"-74.0059,40.7128\"（纽约）\n  * 精度越高，查询结果越准确\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n  * 其他支持的语言代码\n- unit: 度量单位系统（可选参数，默认m）\n  * m：公制单位（摄氏度、公里/小时等）\n  * i：英制单位（华氏度、英里/小时等）\n使用示例：\n- 格点实时天气 116.4074,39.9042\n- 格点实时天气 -74.0059,40.7128 en i\n- 格点实时天气 139.6917,35.6895 ja m\n适用场景：\n- 查询具体地址的天气\n- 户外活动地点天气\n- 精确位置气象数据\n- 科研用途\n注意事项：\n- 必须使用经纬度坐标，不支持城市名称\n- 坐标精度影响查询准确性\n- 返回数据更加精细化",
 
-        "格点每日天气预报": "格点每日天气预报 days location [lang] [unit]\n- days: 预报天数(3d, 7d)（必选）\n- location: 经纬度坐标（必选）\n- lang: 多语言设置（可选）\n- unit: 单位（可选）\n示例: 格点每日天气预报 3d 116.4074,39.9042",
+        "格点每日天气预报": "【格点每日天气预报 帮助】\n功能：基于网格点查询精确位置的未来天气预报\n用法：格点每日天气预报 days location [lang] [unit]\n参数详解：\n- days: 预报天数（必选参数）\n  * 3d：未来3天预报\n  * 7d：未来7天预报\n- location: 精确经纬度坐标（必选参数）\n  * 格式必须为\"经度,纬度\"\n  * 如\"116.4074,39.9042\"（北京某点）\n  * \"-74.0059,40.7128\"（纽约某点）\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n  * 其他支持的语言代码\n- unit: 度量单位系统（可选参数，默认m）\n  * m：公制单位（摄氏度、公里/小时等）\n  * i：英制单位（华氏度、英里/小时等）\n使用示例：\n- 格点每日天气预报 3d 116.4074,39.9042\n- 格点每日天气预报 7d -74.0059,40.7128 en i\n- 格点每日天气预报 3d 139.6917,35.6895 ja\n优势特点：\n- 位置精度高，适合具体地点\n- 数据颗粒度细\n- 适合专业气象应用\n注意事项：\n- 仅支持3天和7天预报\n- 必须使用经纬度坐标\n- 预报准确度较高",
 
-        "格点逐小时天气预报": "格点逐小时天气预报 hours location [lang] [unit]\n- hours: 预报小时数(24h, 72h, 168h)（必选）\n- location: 经纬度坐标（必选）\n- lang: 多语言设置（可选）\n- unit: 单位（可选）\n示例: 格点逐小时天气预报 24h 116.4074,39.9042",
+        "格点逐小时天气预报": "【格点逐小时天气预报 帮助】\n功能：基于网格点查询精确位置的逐小时天气预报\n用法：格点逐小时天气预报 hours location [lang] [unit]\n参数详解：\n- hours: 预报小时数（必选参数）\n  * 24h：未来24小时预报\n  * 72h：未来72小时预报\n  * 168h：未来168小时预报（一周）\n- location: 精确经纬度坐标（必选参数）\n  * 格式必须为\"经度,纬度\"\n  * 精度越高结果越准确\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n- unit: 度量单位系统（可选参数，默认m）\n  * m：公制单位\n  * i：英制单位\n使用示例：\n- 格点逐小时天气预报 24h 116.4074,39.9042\n- 格点逐小时天气预报 72h -74.0059,40.7128 en\n应用场景：\n- 精确位置短期天气规划\n- 户外活动详细安排\n- 专业气象研究\n注意事项：\n- 必须使用经纬度坐标\n- 24小时预报准确度最高\n- 数据更新频率高",
 
-        "分钟级降水": "分钟级降水 location [lang]\n- location: 经纬度坐标（必选）\n- lang: 多语言设置（可选）\n示例: 分钟级降水 116.4074,39.9042",
+        "分钟级降水": "【分钟级降水 帮助】\n功能：查询未来2小时内每5分钟的降水预报\n用法：分钟级降水 location [lang]\n参数详解：\n- location: 精确经纬度坐标（必选参数）\n  * 格式必须为\"经度,纬度\"\n  * 如\"116.4074,39.9042\"（北京）\n  * 精度影响预报准确性\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n使用示例：\n- 分钟级降水 116.4074,39.9042\n- 分钟级降水 -74.0059,40.7128 en\n- 分钟级降水 139.6917,35.6895 ja\n预报特点：\n- 时间分辨率：每5分钟一个预报点\n- 预报时长：未来2小时\n- 预报内容：降水量（毫米）\n适用场景：\n- 短期出行决策\n- 户外活动安排\n- 交通路况预判\n注意事项：\n- 仅支持经纬度坐标查询\n- 预报时效性很强\n- 临近预报准确度较高",
 
-        "实时天气预警": "实时天气预警 latitude longitude [localTime] [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- localTime: 是否返回本地时间(true/false)（可选）\n- lang: 多语言设置（可选）\n示例: 实时天气预警 39.9042 116.4074\n示例: 实时天气预警 31.2304 121.4737 true zh",
+        "实时天气预警": "【实时天气预警 帮助】\n功能：查询指定坐标的当前天气预警信息\n用法：实时天气预警 latitude longitude [localTime] [lang]\n参数详解：\n- latitude: 纬度坐标（必选参数）\n  * 数值范围：-90到90\n  * 如39.9042（北京纬度）\n  * 51.5074（伦敦纬度）\n- longitude: 经度坐标（必选参数）\n  * 数值范围：-180到180\n  * 如116.4074（北京经度）\n  * -0.1278（伦敦经度）\n- localTime: 是否返回本地时间（可选参数，默认false）\n  * true：返回当地时间\n  * false：返回UTC时间\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n  * ja：日语\n使用示例：\n- 实时天气预警 39.9042 116.4074\n- 实时天气预警 31.2304 121.4737 true zh\n- 实时天气预警 51.5074 -0.1278 false en\n预警类型：\n- 暴雨预警\n- 台风预警\n- 暴雪预警\n- 大风预警\n- 高温预警\n- 其他气象灾害预警\n注意事项：\n- 纬度和经度均为必填参数\n- 坐标精度影响预警范围判断\n- 无预警时返回\"当前无天气预警\"",
 
-        "天气指数预报": "天气指数预报 days location type [lang]\n- days: 预报天数(1d, 3d)（必选）\n- location: LocationID或经纬度坐标（必选）\n- type: 指数类型ID（可选，默认0表示所有）\n- lang: 多语言设置（可选）\n示例: 天气指数预报 1d 101010100 0 zh",
+        "天气指数预报": "【天气指数预报 帮助】\n功能：查询各类生活气象指数预报\n用法：天气指数预报 days location type [lang]\n参数详解：\n- days: 预报天数（必选参数）\n  * 1d：未来1天指数预报\n  * 3d：未来3天指数预报\n- location: 查询位置标识（必选参数）\n  * LocationID：如\"101010100\"\n  * 经纬度坐标：如\"116.4074,39.9042\"\n- type: 指数类型ID（可选参数，默认0）\n  * 0：返回所有指数类型\n  * 1：运动指数\n  * 2：洗车指数\n  * 3：穿衣指数\n  * 4：钓鱼指数\n  * 5：紫外线指数\n  * 6：旅游指数\n  * 其他具体指数ID\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n使用示例：\n- 天气指数预报 1d 101010100 0 zh\n- 天气指数预报 3d 116.4074,39.9042 5 en\n- 天气指数预报 1d 101020100\n指数类型说明：\n- 运动指数：适宜户外运动程度\n- 洗车指数：洗车适宜程度\n- 穿衣指数：着装建议\n- 钓鱼指数：钓鱼适宜程度\n- 紫外线指数：防晒建议\n- 旅游指数：出游适宜程度\n注意事项：\n- 不同地区指数种类可能不同\n- 指数等级分为多个级别\n- 提供生活指导建议",
 
-        "实时空气质量": "实时空气质量 latitude longitude [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- lang: 多语言设置（可选）\n示例: 实时空气质量 39.9042 116.4074",
+        "实时空气质量": "【实时空气质量 帮助】\n功能：查询指定坐标的当前空气质量状况\n用法：实时空气质量 latitude longitude [lang]\n参数详解：\n- latitude: 纬度坐标（必选参数）\n  * 数值范围：-90到90\n  * 如39.9042（北京）\n  * 31.2304（上海）\n- longitude: 经度坐标（必选参数）\n  * 数值范围：-180到180\n  * 如116.4074（北京）\n  * 121.4737（上海）\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n使用示例：\n- 实时空气质量 39.9042 116.4074\n- 实时空气质量 31.2304 121.4737 en\n返回信息包含：\n- AQI指数数值\n- 空气质量等级\n- 首要污染物\n- PM2.5浓度\n- PM10浓度\n- SO2、NO2、CO、O3浓度\n- 数据发布时间\n空气质量等级：\n- 0-50：优\n- 51-100：良\n- 101-150：轻度污染\n- 151-200：中度污染\n- 201-300：重度污染\n- 300+：严重污染\n注意事项：\n- 纬度和经度均为必填\n- 数据来源于最近的监测站点\n- 更新频率约每小时一次",
 
-        "空气质量每日预报": "空气质量每日预报 latitude longitude [localTime] [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- localTime: 是否返回本地时间（可选）\n- lang: 多语言设置（可选）\n示例: 空气质量每日预报 39.9042 116.4074",
+        "空气质量每日预报": "【空气质量每日预报 帮助】\n功能：查询未来几天的空气质量预报\n用法：空气质量每日预报 latitude longitude [localTime] [lang]\n参数详解：\n- latitude: 纬度坐标（必选参数）\n  * 数值范围：-90到90\n  * 精确到小数点后4-6位\n- longitude: 经度坐标（必选参数）\n  * 数值范围：-180到180\n  * 精确到小数点后4-6位\n- localTime: 是否返回本地时间（可选参数，默认false）\n  * true：显示当地时区时间\n  * false：显示UTC时间\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n使用示例：\n- 空气质量每日预报 39.9042 116.4074\n- 空气质量每日预报 31.2304 121.4737 true zh\n- 空气质量每日预报 51.5074 -0.1278 false en\n预报内容：\n- 未来7天AQI预报\n- 每日空气质量等级\n- 主要污染物预测\n- 污染趋势分析\n适用场景：\n- 健康出行规划\n- 户外活动安排\n- 呼吸道疾病预防\n- 环境政策制定参考\n注意事项：\n- 预报准确度随时间延长而降低\n- 受气象条件影响较大\n- 仅供参考，以实际监测为准",
 
-        "空气质量小时预报": "空气质量小时预报 latitude longitude [localTime] [lang]\n- latitude: 纬度（必选）\n- longitude: 经度（必选）\n- localTime: 是否返回本地时间（可选）\n- lang: 多语言设置（可选）\n示例: 空气质量小时预报 39.9042 116.4074",
+        "空气质量小时预报": "【空气质量小时预报 帮助】\n功能：查询未来24小时的空气质量逐小时变化\n用法：空气质量小时预报 latitude longitude [localTime] [lang]\n参数详解：\n- latitude: 纬度坐标（必选参数）\n  * 数值范围：-90到90\n  * 建议精确到小数点后4位以上\n- longitude: 经度坐标（必选参数）\n  * 数值范围：-180到180\n  * 建议精确到小数点后4位以上\n- localTime: 是否返回本地时间（可选参数，默认false）\n  * true：显示当地时间\n  * false：显示UTC时间\n- lang: 多语言设置（可选参数，默认zh）\n  * zh：简体中文\n  * en：英语\n使用示例：\n- 空气质量小时预报 39.9042 116.4074\n- 空气质量小时预报 31.2304 121.4737 true zh\n- 空气质量小时预报 40.7128 -74.0060 false en\n预报特点：\n- 时间分辨率：每小时一个预报点\n- 预报时长：未来24小时\n- 预报指标：AQI、主要污染物浓度\n应用场景：\n- 短期健康防护安排\n- 户外运动时间选择\n- 通勤路线规划\n- 敏感人群活动调整\n注意事项：\n- 短期预报准确度相对较高\n- 受气象条件变化影响\n- 临近时段预报更可靠\n- 数据更新及时",
 
-        "天气统计": "天气统计\n查看今日和本月的API调用统计信息\n示例: 天气统计",
+        "天气统计": "【天气统计 帮助】\n功能：查看天气API的使用统计信息\n用法：天气统计\n功能说明：\n此命令无需参数，直接执行即可\n返回信息包含：\n- 今日API调用次数及剩余次数\n- 本月API调用总量\n- 调用最多的用户和群组\n- API使用趋势分析\n统计维度：\n- 按用户统计：各用户调用次数排名\n- 按群组统计：各群组调用次数排名\n- 按时间统计：日/月调用趋势\n使用示例：\n- 天气统计\n适用对象：\n- 所有用户均可查看\n- 主人可查看详细统计\n- 普通用户查看基本统计\n注意事项：\n- 统计数据每日更新\n- 有助于合理使用API资源\n- 超过限制会有相应提示",
 
-        "天气开关": "天气开关 [开启|关闭]\n控制天气API的开关状态（仅主人可用）\n- 开启: 启用天气API\n- 关闭: 禁用天气API（仅主人可使用）\n示例: 天气开关 开启\n示例: 天气开关 关闭"
+        "天气开关": "【天气开关 帮助】\n功能：控制天气API服务的开启与关闭状态\n用法：天气开关 [开启|关闭]\n权限说明：\n⚠️ 此命令仅机器人主人可以使用\n⚠️ 普通用户无权执行此操作\n参数说明：\n- 开启：启用天气API服务\n  * 恢复所有用户正常使用\n  * 重新计算调用次数限制\n  * 恢复天气查询功能\n- 关闭：禁用天气API服务\n  * 除主人外其他用户无法使用\n  * 保留统计功能\n  * 节约API调用资源\n使用示例：\n- 天气开关 开启\n- 天气开关 关闭\n操作效果：\n开启时：\n- 所有用户可正常使用天气功能\n- 按照配置的限制次数执行\n- 显示正常的天气信息\n关闭时：\n- 仅主人可继续使用天气功能\n- 其他用户收到\"天气API调用已关闭\"提示\n- 统计功能仍然可用\n注意事项：\n- 操作前请确认必要性\n- 关闭后请及时开启\n- 影响所有非主人用户的使用\n- 建议在API额度不足时使用"
     }
 
     return help_info.get(command_name, f"未知命令: {command_name}")
@@ -220,7 +359,9 @@ def is_weather_command(raw_message: str) -> tuple[bool, str, list]:
         "天气指数预报", "实时空气质量", "空气质量每日预报", "空气质量小时预报",
         "天气统计", "天气开关",
         # CMA气象预警订阅命令
-        "订阅预警", "取消订阅预警", "我的订阅"
+        "订阅预警", "取消订阅预警", "我的订阅",
+        # 测试命令
+        "测试气象预警"
     ]
 
     if command_name in supported_commands:
@@ -538,6 +679,13 @@ async def handle_weather_command(command_name: str, args: list, group_id: str, c
             await handle_unsubscribe_warning(args, group_id, user_id, config)
         elif command_name == "我的订阅":
             await handle_my_subscriptions(user_id, group_id)
+        elif command_name == "测试气象预警":
+            # 检查是否为主人
+            owner_id = config.get("owner_id", "")
+            if user_id != owner_id:
+                await send_group_msg(group_id, "只有主人才能使用测试气象预警命令")
+                return
+            await handle_test_weather_alarm(args, group_id, user_id, config)
 
         else:
             await send_group_msg(group_id, f"未知的天气命令: {command_name}")
@@ -642,79 +790,42 @@ async def handle_subscribe_warning(args: list, group_id: str, user_id: str, conf
         await send_group_msg(group_id, "请输入有效的地区名称，格式为：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）")
         return
 
-    # 解析地区名称，格式为：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）
-    # 例如：上海市上海市崇明区 或 广东省惠州市惠城区
-    # 按照字符长度和结构进行解析
-    import re
-    
-    # 使用正则表达式匹配格式：省名+市名+[区/县名]
-    pattern = r'^([^(（]*?)(?:省|市)([^(（]*?)(?:市|自治州|盟)([^区县]*?)(?:区|县|旗)?)?$'
-    match = re.match(pattern, location)
-    
-    if not match:
-        # 如果没有匹配，尝试更简单的模式
-        # 检查是否包含至少两个"市"或类似的分隔符
-        # 按照省市区的结构进行分割
-        parts = []
-        # 先按省市区进行分割
-        temp_location = location
-        
-        # 查找省的位置
-        prov_end = -1
-        for prov_suffix in ['省', '市']:
-            prov_pos = temp_location.find(prov_suffix)
-            if prov_pos != -1:
-                prov_end = prov_pos + len(prov_suffix)
-                break
-        
-        if prov_end == -1:
-            await send_group_msg(group_id, "地区名称格式错误，请使用：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）\n示例: 订阅预警 上海市上海市崇明区 或 订阅预警 广东省惠州市惠城区")
-            return
-            
-        province_part = temp_location[:prov_end]
-        remaining = temp_location[prov_end:]
-        
-        # 查找市的位置
-        city_end = -1
-        for city_suffix in ['市', '自治州', '盟']:
-            city_pos = remaining.find(city_suffix)
-            if city_pos != -1:
-                city_end = city_pos + len(city_suffix)
-                break
-                
-        if city_end == -1:
-            await send_group_msg(group_id, "地区名称格式错误，请使用：省级行政区名称接上市级行政区名称接上县级行政区名称（可选）\n示例: 订阅预警 上海市上海市崇明区 或 订阅预警 广东省惠州市惠城区")
-            return
-            
-        city_part = remaining[:city_end]
-        county_part = remaining[city_end:]
-        
-        # 提取纯名称（去掉后缀）
-        province = province_part.replace('省', '').replace('市', '')
-        city = city_part.replace('市', '').replace('自治州', '').replace('盟', '')
-        county = county_part.replace('区', '').replace('县', '').replace('旗', '')
-        
-        # 构造完整地区路径
-        full_location = f"{province}{city}"
-        if county:
-            full_location += f"{county}"
+    # 特殊处理：全国订阅
+    if location == "全国":
+        # 全国订阅使用特殊标识
+        province = "全国"
+        full_location = "全国"
     else:
-        # 使用正则表达式匹配的结果
-        province = match.group(1)
-        city = match.group(2)
-        county = match.group(3) if match.group(3) else ""
+        # 解析地区名称，格式为：省级行政区名称+市级行政区名称+县级行政区名称（可选）
+        # 例如：上海市上海市崇明区 或 广东省惠州市惠城区
         
-        # 构造完整地区路径
-        full_location = f"{province}{city}"
-        if county:
-            full_location += f"{county}"
+        # 使用更简单可靠的方法解析
+        full_location = location
+        
+        # 验证基本格式：至少包含两个分隔符（省/市 和 市/区）
+        separators = ['省', '市', '自治区', '自治州', '盟', '区', '县', '旗']
+        separator_count = sum(1 for sep in separators if sep in location)
+        
+        if separator_count < 2:
+            await send_group_msg(group_id, "地区名称格式错误，请使用：省级行政区名称+市级行政区名称+县级行政区名称（可选）\n示例: 订阅预警 上海市上海市崇明区 或 订阅预警 广东省惠州市惠城区\n特殊选项: 订阅预警 全国 (接收所有预警)")
+            return
+        
+        # 提取省份信息
+        province = subscriber.extract_province_from_location(location)
+        if not province:
+            await send_group_msg(group_id, "无法识别的地区格式，请检查输入是否正确")
+            return
 
     subscriber = get_subscriber()
     if not subscriber:
         await send_group_msg(group_id, "订阅服务未初始化")
         return
 
-    success = await subscriber.subscribe_location(full_location, group_id, user_id)
+    # 根据订阅类型选择不同的订阅方法
+    if location == "全国":
+        success = await subscriber.subscribe_nationwide(group_id, user_id)
+    else:
+        success = await subscriber.subscribe_location(location, group_id, user_id)
     if success:
         await send_group_msg(group_id, f"成功订阅 {location} 的气象预警！当该地区发布气象预警时，将会在此群通知您。")
     else:
@@ -733,8 +844,25 @@ async def handle_unsubscribe_warning(args: list, group_id: str, user_id: str, co
 
     location = args[0]
     
+    # 特殊处理：全国订阅
+    if location == "全国":
+        subscriber = get_subscriber()
+        if not subscriber:
+            await send_group_msg(group_id, "订阅服务未初始化")
+            return
+        
+        success = await subscriber.unsubscribe_nationwide(group_id, user_id)
+        if success:
+            await send_group_msg(group_id, "已取消订阅全国气象预警。")
+        else:
+            await send_group_msg(group_id, "取消订阅全国气象预警失败，请重试。")
+        return
+    
     # 判断是传统省份格式还是新的省市区格式
-    if len(location) >= 4:  # 可能是新的省市区格式
+    separators = ['省', '市', '自治区', '自治州', '盟', '区', '县', '旗']
+    separator_count = sum(1 for sep in separators if sep in location)
+    
+    if separator_count >= 2:  # 是新的省市区格式
         # 尝试取消地区订阅
         subscriber = get_subscriber()
         if not subscriber:
@@ -792,18 +920,80 @@ async def handle_my_subscriptions(user_id: str, group_id: str) -> None:
         return
 
     subscription_list = []
-    for province, sub_group_id in subscriptions:
-        # 如果是在同一个群聊中订阅的，直接显示省份
+    for display_name, sub_group_id, location_type in subscriptions:
+        # 如果是在同一个群聊中订阅的，直接显示
         if sub_group_id == group_id:
-            subscription_list.append(province)
+            subscription_list.append(display_name)
         else:
             # 如果在其他群聊中订阅的，显示群号信息
-            subscription_list.append(f"{province}(群{sub_group_id})")
+            subscription_list.append(f"{display_name}(群{sub_group_id})")
 
     if subscription_list:
         await send_group_msg(group_id, f"您订阅的气象预警地区：\n{', '.join(subscription_list)}")
     else:
         await send_group_msg(group_id, "您在当前群聊中没有订阅任何地区的气象预警。")
+
+
+async def handle_test_weather_alarm(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
+    """处理测试气象预警命令"""
+    if not CMA_WEATHER_SUBSCRIBER_AVAILABLE:
+        await send_group_msg(group_id, "CMA气象预警订阅功能不可用")
+        return
+    
+    subscriber = get_subscriber()
+    if not subscriber:
+        await send_group_msg(group_id, "订阅服务未初始化")
+        return
+    
+    try:
+        # 获取最新的气象预警
+        latest_alarms = subscriber.client.get_latest_alarms(count=1)
+        
+        if not latest_alarms:
+            await send_group_msg(group_id, "未获取到最新的气象预警信息")
+            return
+        
+        latest_alarm = latest_alarms[0]
+        await send_group_msg(group_id, f"正在测试最新的气象预警推送...\n预警标题: {latest_alarm.get('title', '未知标题')}\n发布时间: {latest_alarm.get('issuetime', '未知时间')}")
+        
+        # 获取预警详情
+        alarm_detail = subscriber.client.get_alarm_detail(latest_alarm.get('url', ''))
+        if not alarm_detail:
+            await send_group_msg(group_id, "获取预警详情失败")
+            return
+        
+        # 模拟检查订阅并推送的逻辑
+        matched_subscribers = []
+        
+        # 检查所有订阅者
+        for location_key, subscribers_list in subscriber.subscribers.items():
+            # 检查省份匹配
+            if subscriber.extract_province_from_title(latest_alarm.get('title', '')):
+                for sub_group_id, sub_user_id in subscribers_list:
+                    if sub_group_id == group_id:  # 只推送给当前群
+                        matched_subscribers.append((location_key, sub_user_id))
+        
+        # 检查地区订阅
+        for full_location, subscribers_list in subscriber.location_subscribers.items():
+            # 简单匹配逻辑（实际应该更复杂）
+            if full_location in latest_alarm.get('title', ''):
+                for sub_group_id, sub_user_id in subscribers_list:
+                    if sub_group_id == group_id:  # 只推送给当前群
+                        matched_subscribers.append((full_location, sub_user_id))
+        
+        if matched_subscribers:
+            # 构建推送消息
+            message, icon_path = await subscriber.build_warning_message(latest_alarm, alarm_detail, user_id, group_id)
+            # 使用复合消息发送函数，在同一消息中发送文本和图片，并正确@用户
+            from message_sender import send_group_msg_with_text_and_image
+            await send_group_msg_with_text_and_image(group_id, message, icon_path, user_id)
+            await send_group_msg(group_id, f"测试完成！共匹配到 {len(matched_subscribers)} 个订阅者")
+        else:
+            await send_group_msg(group_id, "测试完成！当前群没有匹配的订阅者")
+            
+    except Exception as e:
+        logging.error(f"测试气象预警命令执行失败: {e}")
+        await send_group_msg(group_id, f"测试命令执行失败: {str(e)}")
 
 
 async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
@@ -836,10 +1026,10 @@ async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
         "URL可访问性", "端口扫描",
         
         # 游戏类 API
-        "MC服务器查询", "Steam用户查询", "Epic免费游戏", "MC玩家查询", "MC曾用名查询",
+        "MC服务器查询", "Steam用户查询", "Epic免费游戏", "MC玩家查询",
         
         # 文本类 API
-        "文本分析", "MD5哈希", "MD5校验", "Base64编码", "Base64解码", 
+        "MD5哈希", "MD5校验", "Base64编码", "Base64解码", 
         "AES加密", "AES解密", "AES高级加密", "AES高级解密", "格式转换",
         
         # 随机类 API
@@ -847,7 +1037,7 @@ async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
         
         # 图像类 API
         "必应壁纸", "上传图片", "图片转Base64", "生成二维码", "GrAvatar头像", 
-        "摸摸头", "生成摸摸头GIF POST", "无损压缩图片", "生成你们怎么不说话了表情包", "SVG转图片",
+        "摸摸头", "生成你们怎么不说话了表情包",
         
         # 翻译类 API
         "翻译",
@@ -856,7 +1046,7 @@ async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
         "一言",
         
         # 网页解析类 API
-        "网页元数据提取", "网页图片提取",
+        "网页元数据提取",
         
         # 转换类 API
         "时间戳转换", "JSON格式化",
@@ -967,20 +1157,21 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
 
     # 检查是否为测试命令
     if is_valid_test_command_event(event, config):
-        test_cmd = config.get("test_command", "/bydbottest")
+        # 检查是否为主人
+        owner_id = config.get("owner_id", "")
+        if user_id != owner_id:
+            await send_group_msg(group_id, "只有主人才能使用测试命令")
+            return
+            
+        test_cmd = config.get("test_command", "/eqtest")
 
-        logging.info(f"收到测试命令 {test_cmd} 来自群 {group_id}")
+        logging.info(f"收到测试命令 {test_cmd} 来自群 {group_id} 用户 {user_id}")
 
-        # 发送测试提示
-        await send_group_msg(group_id, "开始运行 /bydbottest 测试...\n模拟两条消息（emsc M2.1 + usgs M5.8）")
-
-        # 创建并发送测试数据
+        # 创建并发送测试数据（直接发送，不经过数据库处理）
         test_data_list = create_test_earthquake_data()
 
         for test_data in test_data_list:
-            await process_message(json.dumps(test_data), config, target_group=group_id)
-
-        await send_group_msg(group_id, "测试完成！如果没收到消息，请检查日志 bydbot.log")
+            await send_test_message(test_data, group_id, config)
         return
 
     # 检查是否为天气命令（直接匹配命令名称，使用空格分隔）
@@ -1006,6 +1197,44 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
 
         if is_uapi:
             logging.debug(f"识别为UAPI命令: {uapi_command_name}, 参数: {uapi_args}")
+            
+            # 特殊处理：如果是"摸摸头"命令，尝试提取@的QQ号
+            if uapi_command_name == "摸摸头":
+                # 检查参数是否为空或者是CQ码
+                if not uapi_args:
+                    # 尝试从消息中提取@的QQ号
+                    at_qq = extract_qq_from_at(event)
+                    if at_qq:
+                        uapi_args = [at_qq]
+                        logging.info(f"从消息中提取到@的QQ号: {at_qq}")
+                elif uapi_args and uapi_args[0].startswith('[CQ:at,'):
+                    # 第一个参数是CQ码，提取QQ号
+                    _, cq_codes = parse_cq_code(uapi_args[0])
+                    for cq in cq_codes:
+                        if cq['type'] == 'at':
+                            qq = cq['data'].get('qq')
+                            if qq and qq != 'all':
+                                uapi_args = [qq]
+                                logging.info(f"从CQ码中提取到QQ号: {qq}")
+                                break
+            
+            # 特殊处理：如果是"翻译"命令或文本类API，处理单引号括起来的文本
+            text_api_commands = ["MD5哈希", "MD5校验", "Base64编码", "Base64解码", "AES加密", "AES解密", "AES高级加密", "AES高级解密", "格式转换"]
+            if (uapi_command_name == "翻译" and len(uapi_args) > 1) or (uapi_command_name in text_api_commands and len(uapi_args) >= 1):
+                # 重新解析原始消息，正确处理单引号
+                import shlex
+                try:
+                    # 使用shlex.split来正确处理引号
+                    # 移除命令名称，只保留参数部分
+                    raw_params = raw_message[len(uapi_command_name):].strip()
+                    parsed_args = shlex.split(raw_params)
+                    if len(parsed_args) >= 1:
+                        uapi_args = parsed_args
+                        logging.info(f"{uapi_command_name}命令参数已重新解析: {uapi_args}")
+                except Exception as e:
+                    logging.warning(f"{uapi_command_name}命令参数解析失败，使用原始参数: {e}")
+                    # 解析失败时使用原始参数
+            
             # 检查是否只在配置的群组中响应命令
             if config.get("test_groups_only", True) and group_id not in config.get("groups", {}):
                 logging.debug(f"群 {group_id} 不在配置的群组列表中，忽略UAPI命令")
@@ -1062,6 +1291,9 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                         await send_group_msg(group_id, data)
                     else:
                         await send_group_msg(group_id, f"UAPI命令 {uapi_command_name} 执行失败或无返回结果")
+                elif isinstance(result, str) and not result:
+                    # 对于返回空字符串的命令，不发送额外消息（如MC玩家查询已发送文本和图片）
+                    pass
                 elif isinstance(result, bytes):
                     # 如果返回的是字节数据（图片），保存到临时文件并发送
                     import tempfile
@@ -1107,10 +1339,10 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                 "URL可访问性", "端口扫描",
                 
                 # 游戏类 API
-                "MC服务器查询", "Steam用户查询", "Epic免费游戏", "MC玩家查询", "MC曾用名查询",
+                "MC服务器查询", "Steam用户查询", "Epic免费游戏", "MC玩家查询",
                 
                 # 文本类 API
-                "文本分析", "MD5哈希", "MD5校验", "Base64编码", "Base64解码", 
+                "MD5哈希", "MD5校验", "Base64编码", "Base64解码", 
                 "AES加密", "AES解密", "AES高级加密", "AES高级解密", "格式转换",
                 
                 # 随机类 API
@@ -1118,7 +1350,7 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
                 
                 # 图像类 API
                 "必应壁纸", "上传图片", "图片转Base64", "生成二维码", "GrAvatar头像", 
-                "摸摸头", "生成摸摸头GIF", "无损压缩图片", "生成你们怎么不说话了表情包", "SVG转图片",
+                "摸摸头", "生成摸摸头GIF", "生成你们怎么不说话了表情包",
                 
                 # 翻译类 API
                 "翻译",
