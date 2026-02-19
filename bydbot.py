@@ -193,6 +193,10 @@ def get_help_message():
 • /我的订阅 - 查看个人订阅列表
 • /测试气象预警 - 测试气象预警推送功能（仅主人，需先订阅地区）
 
+【日常问候功能】
+• 早安 - 发送早安问候，包含天气预报和每日新闻图
+• 晚安 - 发送晚安问候，显示当日清醒时间
+
 【系统命令】
 • /eqtest - 运行测试命令（仅主人）
 • /broadcast 或 /群发 - 进入广播模式（仅主人）
@@ -260,6 +264,10 @@ async def main():
     if CMA_WEATHER_SUBSCRIBER_AVAILABLE:
         from cma_weather_subscriber import init_cma_weather_subscriber
         await init_cma_weather_subscriber(config)
+    
+    # 初始化早晚安功能
+    from morning_evening import init_morning_evening_db
+    await init_morning_evening_db()
 
 
 

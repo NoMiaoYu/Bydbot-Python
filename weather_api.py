@@ -16,7 +16,7 @@ _weather_cache = {}
 class QWeatherAPI:
     def __init__(self, config: Dict[str, Any]):
         self.config = config.get('qweather', {})
-        self.api_host = self.config.get('api_host', 'devapi.qweather.com')
+        self.api_host = self.config.get('api_host', '')
         self.api_key = self.config.get('api_key', '')
         self.jwt_token = self.config.get('jwt_token', '')
         self.use_jwt = self.config.get('use_jwt', False)

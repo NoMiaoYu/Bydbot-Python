@@ -8,8 +8,8 @@ import logging
 import os
 import asyncio
 from typing import Dict, Any, Tuple, List, Optional
-from help_message import get_help_message
-from message_sender import send_group_msg, send_group_img
+from help_message import get_help_file_path
+from message_sender import send_group_msg, send_group_img, send_forward_msg
 from ws_handler import process_message  # 复用处理逻辑
 
 # 导入天气API模块
@@ -360,6 +360,8 @@ def is_weather_command(raw_message: str) -> tuple[bool, str, list]:
         "天气统计", "天气开关",
         # CMA气象预警订阅命令
         "订阅预警", "取消订阅预警", "我的订阅",
+        # 早晚安命令
+        "早安", "晚安",
         # 测试命令
         "测试气象预警"
     ]
@@ -679,6 +681,9 @@ async def handle_weather_command(command_name: str, args: list, group_id: str, c
             await handle_unsubscribe_warning(args, group_id, user_id, config)
         elif command_name == "我的订阅":
             await handle_my_subscriptions(user_id, group_id)
+        # 早晚安命令
+        elif command_name in ["早安", "晚安"]:
+            await handle_morning_evening_command(command_name, user_id, group_id, config)
         elif command_name == "测试气象预警":
             # 检查是否为主人
             owner_id = config.get("owner_id", "")
@@ -934,6 +939,18 @@ async def handle_my_subscriptions(user_id: str, group_id: str) -> None:
         await send_group_msg(group_id, "您在当前群聊中没有订阅任何地区的气象预警。")
 
 
+async def handle_morning_evening_command(command_name: str, user_id: str, group_id: str, config: Dict[str, Any]) -> None:
+    """处理早晚安命令"""
+    try:
+        from morning_evening import handle_morning_evening_command as me_handler
+        success = await me_handler(command_name, user_id, group_id, config)
+        if not success:
+            logging.warning(f"早晚安命令处理失败: {command_name} 用户 {user_id}")
+    except Exception as e:
+        logging.error(f"处理早晚安命令异常: {e}")
+        from message_sender import send_group_msg_with_at
+        await send_group_msg_with_at(group_id, "命令处理出错，请稍后再试", user_id)
+
 async def handle_test_weather_alarm(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
     """处理测试气象预警命令"""
     if not CMA_WEATHER_SUBSCRIBER_AVAILABLE:
@@ -1127,8 +1144,31 @@ async def handle_command(event: Dict[str, Any], config: Dict[str, Any]) -> None:
         
         # 如果text_enabled为true，则发送文字帮助
         if help_text_enabled and not help_image_enabled:
-            help_text = get_help_message()
-            await send_group_msg(group_id, help_text)
+            from help_message import get_help_file_path, get_uapi_help_message
+            
+            # 根据配置决定使用哪种帮助内容
+            help_config = config.get("help", {})
+            use_uapi_help = help_config.get("use_uapi_help", False)
+            
+            if use_uapi_help:
+                # 使用简化的UAPI帮助
+                help_content = get_uapi_help_message()
+            else:
+                # 使用完整的帮助文件
+                help_file_path = get_help_file_path(config)
+                try:
+                    with open(help_file_path, 'r', encoding='utf-8') as f:
+                        help_content = f.read()
+                except FileNotFoundError:
+                    # 如果主帮助文件不存在，使用UAPI帮助作为后备
+                    help_content = get_uapi_help_message()
+                except Exception as e:
+                    logging.error(f"读取帮助文件失败: {e}")
+                    await send_group_msg(group_id, "帮助文件读取失败")
+                    return
+            
+            # 使用合并转发发送长文本
+            await send_forward_msg(group_id, help_content)
             return
         
         # 如果image_enabled为true，则发送帮助图片

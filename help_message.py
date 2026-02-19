@@ -7,80 +7,10 @@ import os
 from typing import Dict, Any
 
 
-def get_help_message(config: Dict[str, Any] = None) -> str:
-    """获取帮助信息"""
-    # 检查配置中的帮助设置
-    if config:
-        help_config = config.get('help', {})
-        # 如果配置了help且启用了文字模式
-        if help_config and help_config.get('text_enabled', False):
-            # 返回简化的UAPI帮助
-            return get_uapi_help_message()
-    
-    # 从文件读取帮助信息
-    try:
-        help_file_path = os.path.join(os.path.dirname(__file__), 'help命令.txt')
-        with open(help_file_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        # 如果文件不存在，返回默认帮助信息
-        help_text = """=== Bydbot 帮助菜单 ===
-    
- earthquak earthquake bot
-  bydbot v2.0 - 多功能信息推送机器人
-  
-【地震信息】
-• 自动推送全球地震信息（根据配置过滤）
-• 支持多种数据源（CENC, CEA, JMA, USGS等）
-• 实时地震地图绘制与推送
-
-【天气信息】
-• /天气统计 - 查看API使用统计
-• /天气开关 [开启/关闭] - 控制天气API（仅主人）
-
-【天气查询】
-• /城市搜索 [城市名] - 搜索城市信息
-• /热门城市查询 - 查询热门城市
-• /POI搜索 [地点] [类型] - 搜索兴趣点
-• /实时天气 [location] - 查询实时天气
-• /每日天气预报 [天数] [location] - 查询天气预报
-• /逐小时天气预报 [小时数] [location] - 查询小时预报
-• /分钟级降水 [location] - 查询降水预报
-• /实时天气预警 [lat] [lon] - 查询天气预警
-• /实时空气质量 [lat] [lon] - 查询空气质量
-
-【UAPI功能】
-• /B站直播间查询 [mid/room_id] [ID] - 查询B站直播间
-• /B站用户查询 [UID] - 查询B站用户信息
-• /B站投稿查询 [mid] - 查询B站用户投稿
-• /GitHub仓库查询 [owner] [repo] - 查询GitHub仓库
-• /热榜查询 [type] - 查询各平台热榜
-• /世界时间查询 [city] - 查询世界时间
-• /天气查询 [city] - 查询天气（UAPI）
-• /手机归属地查询 [phone] - 查询手机号归属地
-• /随机数生成 [min] [max] [count] - 生成随机数
-• /ICP备案查询 [domain] - 查询域名ICP备案
-• /IP信息查询 [ip] - 查询IP地理位置
-• /一言 - 获取一句优美的话
-
-【气象预警订阅】
-• /订阅预警 [省份] - 订阅某省气象预警
-• /取消订阅预警 [省份] - 取消订阅某省预警
-• /我的订阅 - 查看个人订阅列表
-
-【系统命令】
-• /eqtest - 运行测试命令
-• /broadcast 或 /群发 - 进入广播模式（仅主人）
-
-【数据源说明】
-• 当前支持30+个地震数据源
-• 可配置黑白名单过滤规则
-• 支持多种预警类型（地震、海啸、气象等）
-
-注：[...]表示必填参数，(...)表示选填参数
-更多帮助请查看具体命令后加-h或-help
-"""
-        return help_text
+def get_help_file_path(config: Dict[str, Any] = None) -> str:
+    """获取帮助文件路径"""
+    # 始终返回主帮助文件路径
+    return os.path.join(os.path.dirname(__file__), 'help命令.txt')
 
 
 def get_uapi_help_message() -> str:

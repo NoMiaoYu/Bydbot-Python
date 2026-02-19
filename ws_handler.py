@@ -84,6 +84,22 @@ async def init_db():
                 )
             ''')
 
+        # 创建早晚安用户状态表
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS morning_evening_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                last_morning_time TIMESTAMP,
+                last_evening_time TIMESTAMP,
+                wake_up_time TEXT,  -- 清醒时间
+                location_id TEXT,   -- 用户订阅地区的LocationID
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, group_id)
+            )
+        ''')
+        
         # 创建索引以提高查询性能（仅在不存在时创建）
         indexes_to_create = [
             ('idx_shock_time', 'CREATE INDEX IF NOT EXISTS idx_shock_time ON earthquakes(shock_time)'),
@@ -91,7 +107,9 @@ async def init_db():
             ('idx_weather_date', 'CREATE INDEX IF NOT EXISTS idx_weather_date ON weather_api_usage(date)'),
             ('idx_weather_month', 'CREATE INDEX IF NOT EXISTS idx_weather_month ON weather_api_usage(month)'),
             ('idx_weather_group', 'CREATE INDEX IF NOT EXISTS idx_weather_group ON weather_api_usage(group_id)'),
-            ('idx_weather_user', 'CREATE INDEX IF NOT EXISTS idx_weather_user ON weather_api_usage(user_id)')
+            ('idx_weather_user', 'CREATE INDEX IF NOT EXISTS idx_weather_user ON weather_api_usage(user_id)'),
+            ('idx_morning_evening_user', 'CREATE INDEX IF NOT EXISTS idx_morning_evening_user ON morning_evening_status(user_id)'),
+            ('idx_morning_evening_group', 'CREATE INDEX IF NOT EXISTS idx_morning_evening_group ON morning_evening_status(group_id)')
         ]
         
         for index_name, create_sql in indexes_to_create:
