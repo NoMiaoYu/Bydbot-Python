@@ -1,5 +1,5 @@
 @echo off
-title Bydbot - 多功能信息推送机器人
-cd /d "%~dp0"
+chcp 65001 > nul
+echo 正在启动 Bydbot...
 python bydbot.py
 pause

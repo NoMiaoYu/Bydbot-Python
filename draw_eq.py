@@ -3,27 +3,39 @@ import logging
 import matplotlib
 matplotlib.use('Agg')  # 非交互式后端
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from matplotlib.patches import FancyBboxPatch
 import tempfile
 import numpy as np
 import os
+from typing import Dict, Any, Optional, Tuple
 
+# 获取项目根目录
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+FONT_PATH = os.path.join(PROJECT_ROOT, 'Minecraft AE.ttf')
+
+# 添加字体路径
+if os.path.exists(FONT_PATH):
+    font_prop = fm.FontProperties(fname=FONT_PATH)
+    font_family = font_prop.get_name()
+else:
+    font_family = 'Microsoft YaHei'
 
 # 全局配置
-plt.rcParams['font.sans-serif'] = ['Minecraft AE']
+plt.rcParams['font.sans-serif'] = [font_family, 'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'FangSong']
 plt.rcParams['axes.unicode_minus'] = False
 plt.ioff()
 
 
-async def draw_earthquake_async(data, source=None):
+async def draw_earthquake_async(data: Dict[str, Any], source: Optional[str] = None) -> Optional[str]:
     """异步绘制地震地图"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, draw_earthquake, data, source)
 
 
-def draw_earthquake(data, source=None):
+def draw_earthquake(data: Dict[str, Any], source: Optional[str] = None) -> Optional[str]:
     """绘制地震地图的主要函数"""
     try:
         # 提取地震数据
@@ -54,6 +66,14 @@ def draw_earthquake(data, source=None):
         logging.info(f"地震地图绘制成功：{final_image_path}")
         return final_image_path
 
+    except KeyError as e:
+        logging.error(f"绘图失败：缺少必要的数据字段 {e}")
+        plt.close('all')
+        return None
+    except ValueError as e:
+        logging.error(f"绘图失败：数据格式错误 {e}")
+        plt.close('all')
+        return None
     except Exception as e:
         logging.error(f"绘图失败：{str(e)}", exc_info=True)
         plt.close('all')
@@ -62,8 +82,8 @@ def draw_earthquake(data, source=None):
 
 def calculate_map_extent(lon, lat):
     """计算地图范围"""
-    extent_size_lon = 0.9  # 缩小视野以显示震源周围更多详细情况（原值1.0，现在放大0.1）
-    extent_size_lat = 0.9 if abs(lat) < 60 else 1.35  # 考虑高纬度地区，相应缩小（原值1.0/1.5，现在放大0.1）
+    extent_size_lon = 3.0  # 扩大视野范围，显示更多陆地
+    extent_size_lat = 3.0 if abs(lat) < 60 else 4.0  # 考虑高纬度地区
     lon_min, lon_max = lon - extent_size_lon, lon + extent_size_lon
     lat_min, lat_max = lat - extent_size_lat, lat + extent_size_lat
 
@@ -122,8 +142,8 @@ def create_map_image(lat, lon, map_extent, lon_min, lon_max, lat_min, lat_max, d
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_map:
         plt.savefig(
             tmp_map.name,
-            bbox_inches='tight',  # 使用tight边界以确保完全填充
-            pad_inches=0,         # 无内边距
+            bbox_inches='tight',
+            pad_inches=0,
             facecolor='black',
             edgecolor='black',
             dpi=dpi
@@ -190,15 +210,14 @@ def draw_china_faults(ax_map, lon_min, lon_max, lat_min, lat_max):
 
 def add_earthquake_marker(ax_map, lon, lat):
     """添加地震震中标记"""
-    # 由于地图视野缩小，震中标记也需要相应缩小
     # 白色外层描边 - 从左上到右下
-    ax_map.plot([lon-0.025, lon+0.025], [lat+0.025, lat-0.025], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
+    ax_map.plot([lon-0.06, lon+0.06], [lat+0.06, lat-0.06], color='white', linewidth=4, transform=ccrs.PlateCarree(), zorder=3)
     # 白色外层描边 - 从右上到左下
-    ax_map.plot([lon+0.025, lon-0.025], [lat+0.025, lat-0.025], color='white', linewidth=6, transform=ccrs.PlateCarree(), zorder=3)
+    ax_map.plot([lon+0.06, lon-0.06], [lat+0.06, lat-0.06], color='white', linewidth=4, transform=ccrs.PlateCarree(), zorder=3)
     # 红色交叉主体 - 从左上到右下
-    ax_map.plot([lon-0.02, lon+0.02], [lat+0.02, lat-0.02], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+    ax_map.plot([lon-0.05, lon+0.05], [lat+0.05, lat-0.05], color='#FF0000', linewidth=2, transform=ccrs.PlateCarree(), zorder=4)
     # 红色交叉主体 - 从右上到左下
-    ax_map.plot([lon+0.02, lon-0.02], [lat+0.02, lat-0.02], color='#FF0000', linewidth=3, transform=ccrs.PlateCarree(), zorder=4)
+    ax_map.plot([lon+0.05, lon-0.05], [lat+0.05, lat-0.05], color='#FF0000', linewidth=2, transform=ccrs.PlateCarree(), zorder=4)
 
 
 def add_info_box_to_image(temp_map_path, time, place, info_type, mag, lon, lat, source=None):
@@ -333,13 +352,12 @@ def add_info_text(ax_final, time, place, info_type, mag, lon, lat):
     bbox_height = 0.04  # 文本框高度
 
     # 添加文本框背景
-    from matplotlib.patches import FancyBboxPatch
     bbox = FancyBboxPatch(
         (0.01, 0.92),
         bbox_width, bbox_height,
         boxstyle="round,pad=0.01",
         fc="white", ec="none",
-        transform=fig.transFigure,  # 使用 figure 的坐标系
+        transform=fig.transFigure,
         alpha=0.95
     )
     fig.patches.append(bbox)
@@ -351,7 +369,7 @@ def add_info_text(ax_final, time, place, info_type, mag, lon, lat):
         fontsize=font_size,
         color='black',
         va='center', ha='left',
-        transform=fig.transFigure,  # 使用 figure 的坐标系
+        transform=fig.transFigure,
         weight='bold',
         antialiased=True
     )
@@ -367,7 +385,7 @@ def calculate_font_size(info_text):
         font_size = base_font_size * 1.2
     else:
         font_size = base_font_size
-    return max(10, min(16, font_size))  # 限制字体大小范围
+    return max(10, min(16, font_size))
 
 
 def calculate_textbox_width(fig, info_text, font_size):
@@ -377,9 +395,14 @@ def calculate_textbox_width(fig, info_text, font_size):
         from matplotlib.textpath import TextPath
         from matplotlib.font_manager import FontProperties
 
-        # 获取字体属性
-        font_props = FontProperties()
-        font_props.set_family(['Minecraft AE'])
+        # 获取字体属性 - 使用全局配置的字体
+        if os.path.exists(FONT_PATH):
+            # 如果字体文件存在，使用字体文件路径
+            font_props = FontProperties(fname=FONT_PATH)
+        else:
+            # 否则使用全局配置的字体名称
+            font_props = FontProperties()
+            font_props.set_family([font_family, 'Microsoft YaHei', 'SimHei', 'SimSun'])
 
         # 创建文本路径来测量实际文本宽度
         tp = TextPath((0, 0), info_text, size=font_size, prop=font_props)
@@ -388,10 +411,10 @@ def calculate_textbox_width(fig, info_text, font_size):
         text_width_points = text_bbox.width
 
         # 转换为相对于图形的宽度估算
-        estimated_text_width_ratio = text_width_points / (fig.get_figwidth() * 72)  # 72 points per inch
+        estimated_text_width_ratio = text_width_points / (fig.get_figwidth() * 72)
 
         # 为了确保文本框足够宽，增加一些边距
-        padding_ratio = 0.05  # 5%的额外空间
+        padding_ratio = 0.05
         calculated_text_box_width = min(0.8, estimated_text_width_ratio + padding_ratio)
 
         # 确保文本框最小宽度
@@ -399,7 +422,3 @@ def calculate_textbox_width(fig, info_text, font_size):
     except:
         # 如果无法精确计算，使用默认宽度
         return 0.4
-"""
-Bydbot - 绘图模块
-负责生成地震相关图像
-"""
