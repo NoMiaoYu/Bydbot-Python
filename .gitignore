@@ -1,9 +1,35 @@
-*.md
-__pycache__/
-pictures/
-Docs/
-Another/
+# 配置文件
+config.json
+*.env
+
+# 数据文件
 data/
-*.gmt
+*.db
+*.sqlite
+
+# 缓存文件
+__pycache__/
+*.pyc
+*.pyo
+
+# 日志文件
+*.log
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 图片缓存
+pictures/
+
+# 临时文件
+*.tmp
+*.temp
 
 *.txt
+*.md
