@@ -188,7 +188,7 @@ async def send_group_msg_with_text_and_image(group_id: str, text: str, image_pat
         return False
 
 
-async def send_group_msg(group_id: str, text: str) -> bool:
+async def send_group_msg(group_id: str, text: str, no_merge_forward: bool = False) -> bool:
     """
     发送文本消息到QQ群
     :param group_id: 群号
@@ -201,8 +201,8 @@ async def send_group_msg(group_id: str, text: str) -> bool:
         return False
 
     try:
-        # 检查消息长度，如果超过250字符则使用合并转发
-        if len(text) > 250:
+        # 检查消息长度，如果超过250字符且不禁用合并转发，则使用合并转发
+        if len(text) > 250 and not no_merge_forward:
             # 发送合并转发消息
             return await send_forward_msg(group_id, text)
         else:
@@ -215,7 +215,8 @@ async def send_group_msg(group_id: str, text: str) -> bool:
                 response_text = await resp.text()
 
                 if resp.status == 200:
-                    logging.info(f"发送文本到群 {group_id}: {text[:50]}...")  # 只记录前50个字符
+                    forward_info = "(禁用合并转发)" if no_merge_forward else ""
+                    logging.info(f"发送文本到群 {group_id}{forward_info}: {text[:50]}...")  # 只记录前50个字符
                     return True
                 else:
                     logging.error(f"发送失败，状态码 {resp.status}: {response_text}")

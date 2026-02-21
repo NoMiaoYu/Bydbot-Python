@@ -84,7 +84,7 @@ async def init_db():
                 )
             ''')
 
-        # 创建早晚安用户状态表
+        # 创建早晚安用户状态表（简化版）
         await db.execute('''
             CREATE TABLE IF NOT EXISTS morning_evening_status (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,7 +92,6 @@ async def init_db():
                 group_id TEXT NOT NULL,
                 last_morning_time TIMESTAMP,
                 last_evening_time TIMESTAMP,
-                wake_up_time TEXT,  -- 清醒时间
                 location_id TEXT,   -- 用户订阅地区的LocationID
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -343,19 +342,18 @@ def format_coordinates(event_data):
 
 def normalize_longitude(lon):
     """规范化经度值，确保在-180到180之间"""
+    original_lon = lon  # 在try外部保存原始值
     try:
-        original_lon = lon  # 保存原始值用于方向检测
-
         # 如果输入是字符串，尝试解析
         if isinstance(lon, str):
             # 检查是否包含方向字符
             has_direction = 'E' in lon.upper() or 'W' in lon.upper()
             is_west = 'W' in lon.upper()
-
+            
             # 移除可能的方向字符并转换为浮点数
             lon_clean = lon.replace('°', '').replace('E', '').replace('W', '').strip()
             lon = float(lon_clean)
-
+            
             # 如果原字符串包含方向且是西经，则转为负值
             if has_direction and is_west:
                 lon = -abs(lon)
@@ -363,13 +361,13 @@ def normalize_longitude(lon):
                 lon = abs(lon)
         else:
             lon = float(lon)
-
+        
         # 将经度标准化到-180到180的范围内
         while lon > 180:
             lon -= 360
         while lon <= -180:
             lon += 360
-
+        
         return lon
     except (ValueError, TypeError):
         logging.warning(f"无法解析经度值: {original_lon}")
@@ -378,19 +376,18 @@ def normalize_longitude(lon):
 
 def normalize_latitude(lat):
     """规范化纬度值，确保在-90到90之间"""
+    original_lat = lat  # 在try外部保存原始值
     try:
-        original_lat = lat  # 保存原始值用于方向检测
-
         # 如果输入是字符串，尝试解析
         if isinstance(lat, str):
             # 检查是否包含方向字符
             has_direction = 'N' in lat.upper() or 'S' in lat.upper()
             is_south = 'S' in lat.upper()
-
+            
             # 移除可能的方向字符并转换为浮点数
             lat_clean = lat.replace('°', '').replace('N', '').replace('S', '').strip()
             lat = float(lat_clean)
-
+            
             # 如果原字符串包含方向且是南纬，则转为负值
             if has_direction and is_south:
                 lat = -abs(lat)
@@ -398,13 +395,13 @@ def normalize_latitude(lat):
                 lat = abs(lat)
         else:
             lat = float(lat)
-
+        
         # 将纬度标准化到-90到90的范围内
         while lat > 90:
             lat = 180 - lat
         while lat < -90:
             lat = -180 - lat
-
+        
         return lat
     except (ValueError, TypeError):
         logging.warning(f"无法解析纬度值: {original_lat}")
@@ -575,7 +572,7 @@ async def send_earthquake_message(group_id, event_data, source, config):
         msg_text = template.format(**formatted)
         if msg_text.strip():
             logging.info(f"向群 {group_id} 发送消息: {msg_text}")
-            await send_group_msg(group_id, msg_text)
+            await send_group_msg(group_id, msg_text, no_merge_forward=True)
     except Exception as e:
         logging.warning(f"模板填充失败 (群 {group_id}): {e}")
 

@@ -31,11 +31,11 @@ def get_db_path() -> str:
     return morning_evening_db_path
 
 async def get_user_status(user_id: str, group_id: str) -> Optional[Dict]:
-    """获取用户早晚安状态"""
+    """获取用户早晚安状态（简化版）"""
     try:
         async with aiosqlite.connect(get_db_path()) as db:
             async with db.execute(
-                """SELECT last_morning_time, last_evening_time, wake_up_time, location_id 
+                """SELECT last_morning_time, last_evening_time, location_id 
                    FROM morning_evening_status 
                    WHERE user_id = ? AND group_id = ?""",
                 (user_id, group_id)
@@ -45,8 +45,7 @@ async def get_user_status(user_id: str, group_id: str) -> Optional[Dict]:
                     return {
                         'last_morning_time': row[0],
                         'last_evening_time': row[1],
-                        'wake_up_time': row[2],
-                        'location_id': row[3]
+                        'location_id': row[2]
                     }
         return None
     except Exception as e:
@@ -54,10 +53,15 @@ async def get_user_status(user_id: str, group_id: str) -> Optional[Dict]:
         return None
 
 async def update_user_status(user_id: str, group_id: str, is_morning: bool, location_id: str = None) -> bool:
-    """更新用户早晚安状态"""
+    """更新用户早晚安状态 - 简化版（移除清醒时间计算）"""
     try:
         current_time = datetime.now()
         async with aiosqlite.connect(get_db_path()) as db:
+            # 定义一天的开始时间
+            today_start = current_time.replace(hour=6, minute=0, second=0, microsecond=0)
+            if current_time.hour < 6:
+                today_start = today_start - timedelta(days=1)
+            
             # 先检查记录是否存在
             async with db.execute(
                 "SELECT id FROM morning_evening_status WHERE user_id = ? AND group_id = ?",
@@ -68,17 +72,14 @@ async def update_user_status(user_id: str, group_id: str, is_morning: bool, loca
             if existing_record:
                 # 记录存在，使用UPDATE
                 if is_morning:
-                    # 早安：更新早安时间，计算清醒时间
-                    last_evening = await get_last_evening_time(user_id, group_id)
-                    wake_up_time = calculate_wake_up_time(last_evening, current_time) if last_evening else "未知"
-                    
+                    # 早安：只更新早安时间和位置
                     await db.execute("""
                         UPDATE morning_evening_status 
-                        SET last_morning_time = ?, wake_up_time = ?, location_id = ?, updated_at = ?
+                        SET last_morning_time = ?, location_id = ?, updated_at = ?
                         WHERE user_id = ? AND group_id = ?
-                    """, (current_time.isoformat(), wake_up_time, location_id, current_time.isoformat(), user_id, group_id))
+                    """, (current_time.isoformat(), location_id, current_time.isoformat(), user_id, group_id))
                 else:
-                    # 晚安：只更新晚安时间
+                    # 晚安：只更新晚安时间和位置
                     await db.execute("""
                         UPDATE morning_evening_status 
                         SET last_evening_time = ?, location_id = ?, updated_at = ?
@@ -87,17 +88,14 @@ async def update_user_status(user_id: str, group_id: str, is_morning: bool, loca
             else:
                 # 记录不存在，使用INSERT
                 if is_morning:
-                    # 早安：插入新记录
-                    last_evening = await get_last_evening_time(user_id, group_id)
-                    wake_up_time = calculate_wake_up_time(last_evening, current_time) if last_evening else "未知"
-                    
+                    # 早安：插入新记录（只记录早安时间）
                     await db.execute("""
                         INSERT INTO morning_evening_status 
-                        (user_id, group_id, last_morning_time, wake_up_time, location_id, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (user_id, group_id, current_time.isoformat(), wake_up_time, location_id, current_time.isoformat()))
+                        (user_id, group_id, last_morning_time, location_id, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (user_id, group_id, current_time.isoformat(), location_id, current_time.isoformat()))
                 else:
-                    # 晚安：插入新记录
+                    # 晚安：插入新记录（只记录晚安时间）
                     await db.execute("""
                         INSERT INTO morning_evening_status 
                         (user_id, group_id, last_evening_time, location_id, updated_at)
@@ -105,6 +103,7 @@ async def update_user_status(user_id: str, group_id: str, is_morning: bool, loca
                     """, (user_id, group_id, current_time.isoformat(), location_id, current_time.isoformat()))
             
             await db.commit()
+            logging.info(f"用户 {user_id} 状态更新成功 (早安: {is_morning})")
         return True
     except Exception as e:
         logging.error(f"更新用户状态失败: {e}")
@@ -127,30 +126,58 @@ async def get_last_evening_time(user_id: str, group_id: str) -> Optional[datetim
         return None
 
 def calculate_wake_up_time(last_evening: datetime, current_morning: datetime) -> str:
-    """计算清醒时间"""
+    """计算清醒时间 - 重写版本"""
     try:
-        # 如果晚安时间在早上6点之后，说明跨天了
-        evening_cutoff = last_evening.replace(hour=6, minute=0, second=0, microsecond=0)
-        if last_evening > evening_cutoff:
-            # 跨天情况：从晚安到第二天早上6点 + 从早上6点到早安
-            time_diff = (current_morning - last_evening).total_seconds()
-        else:
-            # 同一天情况
-            time_diff = (current_morning - last_evening).total_seconds()
+        # 基本验证
+        if not isinstance(last_evening, datetime) or not isinstance(current_morning, datetime):
+            logging.warning("时间参数类型错误")
+            return "未知"
         
-        hours = int(time_diff // 3600)
-        minutes = int((time_diff % 3600) // 60)
+        # 时间顺序验证：早安必须晚于晚安
+        if current_morning <= last_evening:
+            logging.warning(f"时间顺序错误：早安({current_morning}) <= 晚安({last_evening})")
+            return "未知"
         
+        # 计算时间差（秒）
+        time_diff_seconds = (current_morning - last_evening).total_seconds()
+        
+        # 合理性检查
+        if time_diff_seconds <= 0:
+            logging.warning(f"清醒时间非正数: {time_diff_seconds}秒")
+            return "未知"
+        
+        if time_diff_seconds > 86400:  # 24小时 = 86400秒
+            logging.warning(f"清醒时间过长: {time_diff_seconds}秒 ({time_diff_seconds/3600:.1f}小时)")
+            return "未知"
+        
+        # 转换为小时和分钟
+        hours = int(time_diff_seconds // 3600)
+        remaining_seconds = time_diff_seconds % 3600
+        minutes = int(remaining_seconds // 60)
+        
+        # 格式化输出
         if hours > 0:
-            return f"{hours}小时{minutes}分钟"
+            if minutes > 0:
+                return f"{hours}小时{minutes}分钟"
+            else:
+                return f"{hours}小时"
         else:
-            return f"{minutes}分钟"
+            if minutes > 0:
+                return f"{minutes}分钟"
+            else:
+                # 小于1分钟的情况
+                seconds = int(remaining_seconds)
+                if seconds > 0:
+                    return f"{seconds}秒"
+                else:
+                    return "0分钟"
+                    
     except Exception as e:
-        logging.error(f"计算清醒时间失败: {e}")
+        logging.error(f"计算清醒时间异常: {e}")
         return "未知"
 
 async def is_already_greeted_today(user_id: str, group_id: str, is_morning: bool) -> bool:
-    """检查用户今天是否已经发送过早安/晚安"""
+    """检查用户今天是否已经发送过早安/晚安 - 增强版"""
     # 测试群(1071528933)无视重复机制，用于测试功能
     test_group_id = "1071528933"
     if group_id == test_group_id:
@@ -159,31 +186,62 @@ async def is_already_greeted_today(user_id: str, group_id: str, is_morning: bool
     
     try:
         async with aiosqlite.connect(get_db_path()) as db:
+            # 定义一天的开始时间为早上6点
+            now = datetime.now()
+            today_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
+            
+            # 如果现在是凌晨(0-6点)，则今天的开始时间是昨天6点
+            if now.hour < 6:
+                today_start = today_start - timedelta(days=1)
+            
+            # 计算昨天的开始时间（用于清理过期数据）
+            yesterday_start = today_start - timedelta(days=1)
+            
+            # 清理过期数据（超过2天的记录）
+            await db.execute("""
+                DELETE FROM morning_evening_status 
+                WHERE updated_at < ?
+            """, (yesterday_start.isoformat(),))
+            
             if is_morning:
-                # 检查今天的早安记录（从早上6点开始算作新的一天）
-                today_start = datetime.now().replace(hour=6, minute=0, second=0, microsecond=0)
-                if datetime.now().hour < 6:
-                    # 如果现在是凌晨，检查昨天6点到现在
-                    today_start = today_start - timedelta(days=1)
-                
+                # 检查今天的早安记录
                 async with db.execute(
                     """SELECT 1 FROM morning_evening_status 
                        WHERE user_id = ? AND group_id = ? AND last_morning_time >= ?""",
                     (user_id, group_id, today_start.isoformat())
                 ) as cursor:
-                    return await cursor.fetchone() is not None
+                    has_morning_today = await cursor.fetchone() is not None
+                
+                # 如果今天还没有早安记录，重置昨天的状态
+                if not has_morning_today:
+                    await db.execute("""
+                        UPDATE morning_evening_status 
+                        SET last_morning_time = NULL
+                        WHERE user_id = ? AND group_id = ? AND last_morning_time < ?
+                    """, (user_id, group_id, today_start.isoformat()))
+                    logging.info(f"用户 {user_id} 状态已重置（跨天）")
+                
+                return has_morning_today
             else:
                 # 检查今天的晚安记录
-                today_start = datetime.now().replace(hour=6, minute=0, second=0, microsecond=0)
-                if datetime.now().hour < 6:
-                    today_start = today_start - timedelta(days=1)
-                
                 async with db.execute(
                     """SELECT 1 FROM morning_evening_status 
                        WHERE user_id = ? AND group_id = ? AND last_evening_time >= ?""",
                     (user_id, group_id, today_start.isoformat())
                 ) as cursor:
-                    return await cursor.fetchone() is not None
+                    has_evening_today = await cursor.fetchone() is not None
+                
+                # 如果今天还没有晚安记录，重置昨天的状态
+                if not has_evening_today:
+                    await db.execute("""
+                        UPDATE morning_evening_status 
+                        SET last_evening_time = NULL
+                        WHERE user_id = ? AND group_id = ? AND last_evening_time < ?
+                    """, (user_id, group_id, today_start.isoformat()))
+                    logging.info(f"用户 {user_id} 晚安状态已重置（跨天）")
+                
+                return has_evening_today
+                
     except Exception as e:
         logging.error(f"检查重复问候失败: {e}")
         return False
@@ -310,26 +368,17 @@ async def send_morning_greeting(user_id: str, group_id: str, location_id: str, c
         await send_group_msg_with_at(group_id, "早安喵~", user_id)
 
 async def send_evening_greeting(user_id: str, group_id: str):
-    """发送晚安问候"""
+    """发送晚安问候 - 简化版（移除清醒时间）"""
     try:
         from message_sender import send_group_msg_with_at
         
-        # 获取用户状态
-        user_status = await get_user_status(user_id, group_id)
-        has_morning_record = user_status and user_status.get('last_morning_time')
+        # 直接发送简单的晚安消息
+        message = "晚安喵~"
         
-        if has_morning_record:
-            # 有早安记录，显示清醒时间
-            wake_up_time = user_status.get('wake_up_time', '未知')
-            message = f"晚安喵~ 今天清醒了{wake_up_time}"
-        else:
-            # 没有早安记录，只发送基本晚安
-            message = "晚安喵~"
-            
-            # 测试群添加特殊提示
-            test_group_id = "1071528933"
-            if group_id == test_group_id:
-                message += " (测试模式：今天未发送早安)"
+        # 测试群添加特殊提示
+        test_group_id = "1071528933"
+        if group_id == test_group_id:
+            message += " (测试模式)"
         
         # 发送带@的消息
         await send_group_msg_with_at(group_id, message, user_id)

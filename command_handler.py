@@ -41,6 +41,14 @@ import sys
 import re
 sys.path.append(os.path.dirname(__file__))
 
+# 导入别名处理模块
+try:
+    from alias_handler import init_alias_system, resolve_command, is_alias, get_alias_help, is_valid_command, is_alias_enabled
+    ALIAS_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"别名处理模块导入失败: {e}")
+    ALIAS_AVAILABLE = False
+
 # 导入绘图模块
 try:
     from draw_eq import draw_earthquake_async
@@ -168,27 +176,6 @@ def is_help_command_event(event: Dict[str, Any], config: Dict[str, Any]) -> bool
     raw_message = event.get("raw_message", "").strip().lower()
     return raw_message == "/help" or raw_message == "help"
 
-
-def is_help_command_event(event: Dict[str, Any], config: Dict[str, Any]) -> bool:
-    """
-    检查事件是否为帮助命令
-    :param event: 事件数据
-    :param config: 配置
-    :return: 是否为帮助命令
-    """
-    # 检查是否启用命令监听
-    if not config.get("enable_command_listener", False):
-        return False
-
-    # 检查事件类型
-    if event.get("post_type") != "message" or event.get("message_type") != "group":
-        return False
-
-    group_id = str(event.get("group_id", ""))
-
-    # 检查是否只在配置的群组中响应命令
-    if config.get("test_groups_only", True) and group_id not in config.get("groups", {}):
-        return False
 
     # 检查是否为帮助命令
     raw_message = event.get("raw_message", "").strip().lower()
@@ -351,6 +338,13 @@ def is_weather_command(raw_message: str) -> tuple[bool, str, list]:
 
     command_name = msg_parts[0].strip()
     args = [arg.strip() for arg in msg_parts[1:]] if len(msg_parts) > 1 else []
+    
+    # 如果别名系统可用，尝试解析别名
+    if ALIAS_AVAILABLE and is_alias_enabled():
+        resolved_command = resolve_command(command_name)
+        if resolved_command != command_name:
+            logging.info(f"别名解析: '{command_name}' -> '{resolved_command}'")
+            command_name = resolved_command
 
     # 支持的命令列表
     supported_commands = [
@@ -363,7 +357,9 @@ def is_weather_command(raw_message: str) -> tuple[bool, str, list]:
         # 早晚安命令
         "早安", "晚安",
         # 测试命令
-        "测试气象预警"
+        "测试气象预警",
+        # 别名管理命令
+        "添加别名", "删除别名", "查看别名", "别名帮助"
     ]
 
     if command_name in supported_commands:
@@ -816,6 +812,10 @@ async def handle_subscribe_warning(args: list, group_id: str, user_id: str, conf
             return
         
         # 提取省份信息
+        subscriber = get_subscriber()
+        if not subscriber:
+            await send_group_msg(group_id, "订阅服务未初始化")
+            return
         province = subscriber.extract_province_from_location(location)
         if not province:
             await send_group_msg(group_id, "无法识别的地区格式，请检查输入是否正确")
@@ -1013,6 +1013,111 @@ async def handle_test_weather_alarm(args: list, group_id: str, user_id: str, con
         await send_group_msg(group_id, f"测试命令执行失败: {str(e)}")
 
 
+# 别名管理命令处理函数
+async def handle_add_alias(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
+    """处理添加别名命令"""
+    if not ALIAS_AVAILABLE:
+        await send_group_msg(group_id, "别名功能未启用")
+        return
+    
+    if len(args) < 2:
+        await send_group_msg(group_id, "用法: 添加别名 [别名] [原始命令]\n示例: 添加别名 cs 城市搜索")
+        return
+    
+    alias = args[0].strip()
+    original_command = args[1].strip()
+    
+    # 检查权限（只有主人才能添加别名）
+    owner_id = config.get("owner_id", "")
+    if not owner_id or user_id != owner_id:
+        await send_group_msg(group_id, "只有主人才能添加别名")
+        return
+    
+    # 调用别名处理模块添加别名
+    from alias_handler import add_alias
+    success = add_alias(alias, original_command)
+    
+    if success:
+        await send_group_msg(group_id, f"✅ 成功添加别名: '{alias}' -> '{original_command}'")
+    else:
+        await send_group_msg(group_id, f"❌ 添加别名失败: 别名 '{alias}' 可能已存在或原始命令无效")
+
+
+async def handle_remove_alias(args: list, group_id: str, user_id: str, config: Dict[str, Any]) -> None:
+    """处理删除别名命令"""
+    if not ALIAS_AVAILABLE:
+        await send_group_msg(group_id, "别名功能未启用")
+        return
+    
+    if len(args) < 1:
+        await send_group_msg(group_id, "用法: 删除别名 [别名]\n示例: 删除别名 cs")
+        return
+    
+    alias = args[0].strip()
+    
+    # 检查权限（只有主人才能删除别名）
+    owner_id = config.get("owner_id", "")
+    if not owner_id or user_id != owner_id:
+        await send_group_msg(group_id, "只有主人才能删除别名")
+        return
+    
+    # 调用别名处理模块删除别名
+    from alias_handler import remove_alias
+    success = remove_alias(alias)
+    
+    if success:
+        await send_group_msg(group_id, f"✅ 成功删除别名: '{alias}'")
+    else:
+        await send_group_msg(group_id, f"❌ 删除别名失败: 别名 '{alias}' 不存在")
+
+
+async def handle_list_aliases(group_id: str) -> None:
+    """处理查看别名命令"""
+    if not ALIAS_AVAILABLE:
+        await send_group_msg(group_id, "别名功能未启用")
+        return
+    
+    from alias_handler import list_aliases, is_alias_enabled
+    
+    if not is_alias_enabled():
+        await send_group_msg(group_id, "别名系统当前已禁用")
+        return
+    
+    aliases = list_aliases()
+    
+    if not aliases:
+        await send_group_msg(group_id, "当前没有任何别名")
+        return
+    
+    # 构建别名列表消息
+    alias_list = "=== 当前别名列表 ===\n\n"
+    aliases_dict = list_aliases()
+    
+    # 按原命令分组显示
+    for original_command, alias_list_items in sorted(aliases_dict.items()):
+        if alias_list_items:  # 只显示有别名的命令
+            alias_list += f"{original_command}:\n"
+            for alias in alias_list_items:
+                alias_list += f"  • {alias}\n"
+            alias_list += "\n"
+    
+    alias_list += f"总计: {sum(len(aliases) for aliases in aliases_dict.values())} 个别名，映射到 {len([cmd for cmd, aliases in aliases_dict.items() if aliases])} 个原命令"
+    
+    # 使用合并转发发送长文本
+    await send_forward_msg(group_id, alias_list)
+
+
+async def handle_alias_help(group_id: str) -> None:
+    """处理别名帮助命令"""
+    if not ALIAS_AVAILABLE:
+        await send_group_msg(group_id, "别名功能未启用")
+        return
+    
+    from alias_handler import get_alias_help
+    help_text = get_alias_help()
+    await send_group_msg(group_id, help_text)
+
+
 async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
     """
     检查是否为UAPI命令（使用空格分隔参数）
@@ -1028,6 +1133,13 @@ async def is_uapi_command(raw_message: str) -> tuple[bool, str, list]:
 
     command_name = msg_parts[0].strip()
     args = [arg.strip() for arg in msg_parts[1:]] if len(msg_parts) > 1 else []
+    
+    # 如果别名系统可用，尝试解析别名
+    if ALIAS_AVAILABLE and is_alias_enabled():
+        resolved_command = resolve_command(command_name)
+        if resolved_command != command_name:
+            logging.info(f"别名解析: '{command_name}' -> '{resolved_command}'")
+            command_name = resolved_command
 
     # 支持的UAPI命令列表
     supported_commands = [

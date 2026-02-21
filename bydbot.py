@@ -33,6 +33,13 @@ broadcast_mode = {}  # {user_id: True} 表示该用户处于广播模式
 # UAPI可用性标志
 UAPI_AVAILABLE = True
 
+# 别名系统可用性标志
+try:
+    from alias_handler import init_alias_system
+    ALIAS_AVAILABLE = True
+except ImportError:
+    ALIAS_AVAILABLE = False
+
 # 用于在模块间共享状态
 def get_broadcast_mode():
     return broadcast_mode
@@ -268,6 +275,11 @@ async def main():
     # 初始化早晚安功能
     from morning_evening import init_morning_evening_db
     await init_morning_evening_db()
+    
+    # 初始化别名系统
+    if ALIAS_AVAILABLE:
+        from alias_handler import init_alias_system
+        init_alias_system(config)
 
 
 
