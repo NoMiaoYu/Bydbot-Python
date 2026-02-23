@@ -36,6 +36,10 @@
     "557268327": {
       "mode": "blacklist",
       "sources": ["kma", "kma-eew", "gfz", "bcsf", "usp"]
+    },
+    "1042374209": {
+      "mode": "blacklist",
+      "sources": ["kma", "kma-eew", "gfz", "bcsf", "usp"]
     }
   },
 
